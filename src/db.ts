@@ -101,10 +101,10 @@ export interface TransactionRow {
   description: string
   status: string
   amount: number
-  accountId: string
-  categoryId: string
-  merchantId: string
-  rawJson: string
+  accountId: string | null
+  categoryId: string | null
+  merchantId: string | null
+  rawJson: string | null
 }
 
 export function upsertAccount(db: Database, row: AccountRow): void {

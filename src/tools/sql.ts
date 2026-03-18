@@ -10,7 +10,7 @@ export interface QuerySqlResult {
 }
 
 export async function handleQuerySql(args: QuerySqlArgs, ctx: AppContext): Promise<QuerySqlResult> {
-  const trimmed = args.sql.replace(/--[^\n]*/g, '').trim()
+  const trimmed = args.sql.replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\n]*/g, '').trim()
 
   if (!/^SELECT\s/i.test(trimmed)) {
     throw new Error('Only SELECT statements are allowed.')

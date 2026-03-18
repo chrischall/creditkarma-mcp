@@ -52,6 +52,16 @@ describe('ck_query_sql', () => {
       .rejects.toThrow('Only SELECT statements are allowed')
   })
 
+  it('allows SELECT preceded by a block comment', async () => {
+    const result = await handleQuerySql({ sql: '/* find all */ SELECT * FROM transactions' }, ctx)
+    expect(result.rows).toHaveLength(1)
+  })
+
+  it('blocks non-SELECT preceded by a block comment', async () => {
+    await expect(handleQuerySql({ sql: '/* oops */ DROP TABLE transactions' }, ctx))
+      .rejects.toThrow('Only SELECT statements are allowed')
+  })
+
   it('allows SELECT with JOINs', async () => {
     const result = await handleQuerySql({
       sql: `

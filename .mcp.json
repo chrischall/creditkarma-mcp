@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "creditkarma": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "env": {
+        "CK_TOKEN": "",
+        "CK_USERNAME": "",
+        "CK_PASSWORD": "",
+        "CK_DB_PATH": ""
+      }
+    }
+  }
+}

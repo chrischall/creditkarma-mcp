@@ -74,15 +74,15 @@ function queryTransactions(db: Database, filters: ListFilters): ListResult {
   return { transactions: rows, total: countRow.count, offset, limit }
 }
 
-function buildWhere(filters: ListFilters): { where: string; params: unknown[] } {
+function buildWhere(filters: ListFilters): { where: string; params: (string | number)[] } {
   const conditions: string[] = []
-  const params: unknown[] = []
+  const params: (string | number)[] = []
 
   if (filters.start_date) { conditions.push('t.date >= ?'); params.push(filters.start_date) }
   if (filters.end_date) { conditions.push('t.date <= ?'); params.push(filters.end_date) }
-  if (filters.account) { conditions.push('a.name LIKE ?'); params.push(`%${filters.account}%`) }
-  if (filters.category) { conditions.push('c.name LIKE ?'); params.push(`%${filters.category}%`) }
-  if (filters.merchant) { conditions.push('m.name LIKE ?'); params.push(`%${filters.merchant}%`) }
+  if (filters.account) { conditions.push('a.name LIKE ? ESCAPE \'\\\''); params.push(`%${filters.account.replace(/[%_\\]/g, '\\$&')}%`) }
+  if (filters.category) { conditions.push('c.name LIKE ? ESCAPE \'\\\''); params.push(`%${filters.category.replace(/[%_\\]/g, '\\$&')}%`) }
+  if (filters.merchant) { conditions.push('m.name LIKE ? ESCAPE \'\\\''); params.push(`%${filters.merchant.replace(/[%_\\]/g, '\\$&')}%`) }
   if (filters.status) { conditions.push('t.status = ?'); params.push(filters.status) }
   if (filters.min_amount != null) { conditions.push('ABS(t.amount) >= ?'); params.push(filters.min_amount) }
   if (filters.max_amount != null) { conditions.push('ABS(t.amount) <= ?'); params.push(filters.max_amount) }

@@ -109,6 +109,11 @@ describe('ck_list_transactions', () => {
     expect(result.limit).toBe(10)
     expect(result.offset).toBe(0)
   })
+
+  it('treats % in filter as literal, not wildcard', async () => {
+    const result = await handleListTransactions({ merchant: 'Star%ucks' }, ctx)
+    expect(result.total).toBe(0) // no merchant literally named "Star%ucks"
+  })
 })
 
 describe('ck_get_recent_transactions', () => {

@@ -64,26 +64,28 @@ export async function handleSyncTransactions(
       throw err
     }
 
-    for (const tx of page.transactions) {
-      const exists = ctx.db
-        .prepare('SELECT id FROM transactions WHERE id = ?')
-        .get(tx.id)
+    ctx.db.transaction(() => {
+      for (const tx of page.transactions) {
+        const exists = ctx.db
+          .prepare('SELECT id FROM transactions WHERE id = ?')
+          .get(tx.id)
 
-      upsertAccount(ctx.db, {
-        id: tx.account.id, name: tx.account.name, type: tx.account.type,
-        providerName: tx.account.providerName, display: tx.account.accountTypeAndNumberDisplay
-      })
-      upsertCategory(ctx.db, { id: tx.category.id, name: tx.category.name, type: tx.category.type })
-      upsertMerchant(ctx.db, { id: tx.merchant.id, name: tx.merchant.name })
-      upsertTransaction(ctx.db, {
-        id: tx.id, date: tx.date, description: tx.description, status: tx.status,
-        amount: tx.amount.value, accountId: tx.account.id, categoryId: tx.category.id,
-        merchantId: tx.merchant.id, rawJson: JSON.stringify(tx)
-      })
+        upsertAccount(ctx.db, {
+          id: tx.account.id, name: tx.account.name, type: tx.account.type,
+          providerName: tx.account.providerName, display: tx.account.accountTypeAndNumberDisplay
+        })
+        upsertCategory(ctx.db, { id: tx.category.id, name: tx.category.name, type: tx.category.type })
+        upsertMerchant(ctx.db, { id: tx.merchant.id, name: tx.merchant.name })
+        upsertTransaction(ctx.db, {
+          id: tx.id, date: tx.date, description: tx.description, status: tx.status,
+          amount: tx.amount.value, accountId: tx.account.id, categoryId: tx.category.id,
+          merchantId: tx.merchant.id, rawJson: JSON.stringify(tx)
+        })
 
-      if (exists) { updatedCount++ } else { newCount++ }
-      totalCount++
-    }
+        if (exists) { updatedCount++ } else { newCount++ }
+        totalCount++
+      }
+    })()
 
     // Stop if we've reached older-than-cutoff transactions
     if (cutoffDate && page.transactions.length > 0) {
@@ -117,14 +119,6 @@ function utcDateString(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-/** Returns today's date as YYYY-MM-DD.
- *  Uses local-time methods so the date matches the user's wall clock. */
-function localDateString(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
 
 export const syncToolDefinitions = [
   {

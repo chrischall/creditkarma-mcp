@@ -51,7 +51,6 @@ Call `ck_set_session` with your cookie value to store credentials and enable aut
 | Tool | Description |
 |------|-------------|
 | `ck_set_session(cookies)` | Store credentials — accepts CKAT value, `CKAT=<value>`, or full Cookie header |
-| `ck_set_token(token)` | Manually set a bearer token |
 
 ### Sync
 | Tool | Description |

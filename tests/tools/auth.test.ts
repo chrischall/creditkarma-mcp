@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { handleSetToken, handleSetSession, persistSession } from '../../src/tools/auth.js'
+import { handleSetSession, persistSession } from '../../src/tools/auth.js'
 import { CreditKarmaClient } from '../../src/client.js'
 import { initDb } from '../../src/db.js'
 import type { AppContext } from '../../src/index.js'
@@ -12,34 +12,6 @@ function makeTmpDir(): string {
   mkdirSync(dir, { recursive: true })
   return dir
 }
-
-describe('ck_set_token', () => {
-  let ctx: AppContext
-  let tmpDir: string
-
-  beforeEach(() => {
-    tmpDir = makeTmpDir()
-    ctx = {
-      client: new CreditKarmaClient(),
-      db: initDb(':memory:'),
-      mcpJsonPath: join(tmpDir, '.mcp.json')
-    }
-  })
-
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
-  })
-
-  it('sets the token on the client', async () => {
-    await handleSetToken({ token: 'mytoken' }, ctx)
-    expect(ctx.client.getToken()).toBe('mytoken')
-  })
-
-  it('returns success message', async () => {
-    const result = await handleSetToken({ token: 'mytoken' }, ctx)
-    expect(result).toContain('Token set successfully')
-  })
-})
 
 describe('ck_set_session', () => {
   let ctx: AppContext

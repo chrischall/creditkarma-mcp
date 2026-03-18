@@ -2,21 +2,9 @@ import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join, dirname } from 'path'
 import type { AppContext } from '../index.js'
 
-export interface SetTokenArgs {
-  token: string
-}
-
 export interface SetSessionArgs {
   /** Full Cookie header string from any CK network request */
   cookies: string
-}
-
-export async function handleSetToken(args: SetTokenArgs, ctx: AppContext): Promise<string> {
-  ctx.client.setToken(args.token)
-  const warning = persistSession(null, ctx.mcpJsonPath)
-  return warning
-    ? `Token set successfully. Warning: ${warning}`
-    : 'Token set successfully.'
 }
 
 export async function handleSetSession(args: SetSessionArgs, ctx: AppContext): Promise<string> {
@@ -84,16 +72,6 @@ export function persistSession(
 export const persistTokens = persistSession
 
 export const authToolDefinitions = [
-  {
-    name: 'ck_set_token',
-    description: 'Manually set the Credit Karma bearer token. Updates in-memory state and persists to .env.',
-    annotations: { readOnlyHint: false },
-    inputSchema: {
-      type: 'object' as const,
-      properties: { token: { type: 'string', description: 'Bearer token from browser Network tab' } },
-      required: ['token']
-    }
-  },
   {
     name: 'ck_set_session',
     description: 'Store a Credit Karma session to enable automatic token refresh. Accepts any of: (1) the raw CKAT cookie value, (2) the full Cookie header string from any creditkarma.com request, or (3) just "CKAT=<value>". Find CKAT in Chrome DevTools → Application → Cookies → creditkarma.com, or copy the Cookie request header from the Network tab.',

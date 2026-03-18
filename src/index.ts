@@ -12,7 +12,7 @@ import { CreditKarmaClient } from './client.js'
 import { initDb } from './db.js'
 import type { Database } from './db.js'
 
-import { authToolDefinitions, handleSetToken, handleSetSession } from './tools/auth.js'
+import { authToolDefinitions, handleSetSession } from './tools/auth.js'
 import { syncToolDefinitions, handleSyncTransactions } from './tools/sync.js'
 import {
   queryToolDefinitions,
@@ -85,8 +85,7 @@ async function main() {
 async function dispatch(name: string, args: Record<string, unknown>, ctx: AppContext): Promise<unknown> {
   switch (name) {
     // Auth
-    case 'ck_set_token': return handleSetToken(args as { token: string }, ctx)
-case 'ck_set_session': return handleSetSession(args as { cookies: string }, ctx)
+    case 'ck_set_session': return handleSetSession(args as { cookies: string }, ctx)
 
     // Sync
     case 'ck_sync_transactions': return handleSyncTransactions(args as { force_full?: boolean }, ctx)

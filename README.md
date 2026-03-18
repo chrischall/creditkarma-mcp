@@ -110,7 +110,6 @@ The server automatically extracts both the access token and refresh token from t
 | Tool | What it does |
 |------|-------------|
 | `ck_set_session` | Store credentials from your browser cookies (auto-extracts tokens from CKAT) |
-| `ck_set_token` | Manually set a bearer token |
 | `ck_sync_transactions` | Sync transactions into the local SQLite database |
 | `ck_list_transactions` | List transactions with filters (date, account, category, merchant, amount) |
 | `ck_get_recent_transactions` | Fetch the N most recent transactions |
@@ -177,7 +176,7 @@ src/
   db.ts                 SQLite schema and upsert helpers
   transaction.graphql   GraphQL query for transactions
   tools/
-    auth.ts             ck_set_session, ck_set_token
+    auth.ts             ck_set_session
     sync.ts             ck_sync_transactions
     query.ts            ck_list_transactions, ck_get_recent_transactions, etc.
     sql.ts              ck_query_sql

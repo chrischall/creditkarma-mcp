@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { writeFileSync, readFileSync, mkdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { handleSetToken, handleLogin, handleSubmitMfa } from '../../src/tools/auth.js'
+import { handleSetToken, handleSetSession, persistSession } from '../../src/tools/auth.js'
 import { CreditKarmaClient } from '../../src/client.js'
 import { initDb } from '../../src/db.js'
 import type { AppContext } from '../../src/index.js'
@@ -66,47 +66,7 @@ describe('ck_set_token', () => {
   })
 })
 
-describe('ck_login', () => {
-  let ctx: AppContext
-
-  beforeEach(() => {
-    ctx = {
-      client: new CreditKarmaClient(),
-      db: initDb(':memory:'),
-      mcpJsonPath: '/nonexistent/.mcp.json'
-    }
-  })
-
-  it('throws if no username provided', async () => {
-    delete process.env.CK_USERNAME
-    delete process.env.CK_PASSWORD
-    await expect(handleLogin({}, ctx)).rejects.toThrow('Username and password required')
-  })
-
-  it('throws if no password provided', async () => {
-    delete process.env.CK_PASSWORD
-    await expect(handleLogin({ username: 'user' }, ctx)).rejects.toThrow('Username and password required')
-  })
-
-  it('uses env vars when args not provided', async () => {
-    process.env.CK_USERNAME = 'envuser'
-    process.env.CK_PASSWORD = 'envpass'
-    vi.spyOn(ctx.client, 'login').mockResolvedValueOnce(undefined)
-    const result = await handleLogin({}, ctx)
-    expect(ctx.client.login).toHaveBeenCalledWith('envuser', 'envpass')
-    expect(result).toContain('MFA challenge')
-    delete process.env.CK_USERNAME
-    delete process.env.CK_PASSWORD
-  })
-
-  it('calls client.login with provided args', async () => {
-    vi.spyOn(ctx.client, 'login').mockResolvedValueOnce(undefined)
-    await handleLogin({ username: 'u', password: 'p' }, ctx)
-    expect(ctx.client.login).toHaveBeenCalledWith('u', 'p')
-  })
-})
-
-describe('persistToken — invalid JSON', () => {
+describe('ck_set_session', () => {
   let ctx: AppContext
   let tmpDir: string
 
@@ -123,52 +83,125 @@ describe('persistToken — invalid JSON', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('returns Warning when .mcp.json contains invalid JSON', async () => {
-    writeFileSync(ctx.mcpJsonPath, '{ not valid json }}}')
-    const result = await handleSetToken({ token: 'tok' }, ctx)
-    expect(ctx.client.getToken()).toBe('tok')
-    expect(result).toContain('Warning')
-    expect(result).toContain('could not be parsed')
-  })
-})
-
-describe('ck_submit_mfa', () => {
-  let ctx: AppContext
-  let tmpDir: string
-
-  beforeEach(() => {
-    tmpDir = makeTmpDir()
-    ctx = {
-      client: new CreditKarmaClient(),
-      db: initDb(':memory:'),
-      mcpJsonPath: join(tmpDir, '.mcp.json')
-    }
+  it('splits CKAT cookie and sets access + refresh tokens on client', async () => {
+    await handleSetSession({ ckat: 'access-jwt;refresh-jwt', cookies: 'ck=1' }, ctx)
+    expect(ctx.client.getToken()).toBe('access-jwt')
+    expect(ctx.client.getRefreshToken()).toBe('refresh-jwt')
+    expect(ctx.client.getCookies()).toBe('ck=1')
   })
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
+  it('handles URL-encoded semicolon in CKAT value', async () => {
+    await handleSetSession({ ckat: 'access-jwt%3Brefresh-jwt', cookies: 'ck=1' }, ctx)
+    expect(ctx.client.getToken()).toBe('access-jwt')
+    expect(ctx.client.getRefreshToken()).toBe('refresh-jwt')
   })
 
-  it('sets token from submitMfa result', async () => {
-    vi.spyOn(ctx.client, 'submitMfa').mockResolvedValueOnce('new-bearer-token')
-    await handleSubmitMfa({ code: '123456' }, ctx)
-    expect(ctx.client.getToken()).toBe('new-bearer-token')
-  })
-
-  it('returns success message', async () => {
-    vi.spyOn(ctx.client, 'submitMfa').mockResolvedValueOnce('tok')
-    const result = await handleSubmitMfa({ code: '000000' }, ctx)
-    expect(result).toContain('Authenticated successfully')
-  })
-
-  it('persists token to .mcp.json after MFA success', async () => {
+  it('persists all three to .mcp.json', async () => {
     const mcpJson = {
       mcpServers: { creditkarma: { command: 'node', args: ['dist/index.js'], env: { CK_TOKEN: '' } } }
     }
     writeFileSync(ctx.mcpJsonPath, JSON.stringify(mcpJson, null, 2))
-    vi.spyOn(ctx.client, 'submitMfa').mockResolvedValueOnce('mfa-token')
-    await handleSubmitMfa({ code: '999999' }, ctx)
+
+    await handleSetSession({ ckat: 'acc-tok;ref-tok', cookies: 'ck=1' }, ctx)
+
     const updated = JSON.parse(readFileSync(ctx.mcpJsonPath, 'utf8'))
-    expect(updated.mcpServers.creditkarma.env.CK_TOKEN).toBe('mfa-token')
+    expect(updated.mcpServers.creditkarma.env.CK_TOKEN).toBe('acc-tok')
+    expect(updated.mcpServers.creditkarma.env.CK_REFRESH_TOKEN).toBe('ref-tok')
+    expect(updated.mcpServers.creditkarma.env.CK_COOKIES).toBe('ck=1')
+  })
+
+  it('returns Warning when .mcp.json is missing', async () => {
+    const result = await handleSetSession({ ckat: 'a;r', cookies: 'c' }, ctx)
+    expect(result).toContain('Warning')
+  })
+
+  it('returns error message when CKAT is empty', async () => {
+    const result = await handleSetSession({ ckat: '', cookies: 'c' }, ctx)
+    expect(result).toContain('empty or malformed')
+  })
+})
+
+describe('persistSession', () => {
+  let tmpDir: string
+
+  beforeEach(() => { tmpDir = makeTmpDir() })
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }) })
+
+  it('returns Warning when .mcp.json contains invalid JSON', () => {
+    const path = join(tmpDir, '.mcp.json')
+    writeFileSync(path, '{ not valid json }}}')
+    const result = persistSession('tok', null, null, path)
+    expect(result).toContain('could not be parsed')
+  })
+
+  it('persists refresh token when provided', () => {
+    const path = join(tmpDir, '.mcp.json')
+    const mcpJson = { mcpServers: { creditkarma: { env: { CK_TOKEN: '' } } } }
+    writeFileSync(path, JSON.stringify(mcpJson))
+    persistSession('acc', 'ref', null, path)
+    const updated = JSON.parse(readFileSync(path, 'utf8'))
+    expect(updated.mcpServers.creditkarma.env.CK_REFRESH_TOKEN).toBe('ref')
+  })
+
+  it('does not write CK_REFRESH_TOKEN when null', () => {
+    const path = join(tmpDir, '.mcp.json')
+    const mcpJson = { mcpServers: { creditkarma: { env: { CK_TOKEN: '' } } } }
+    writeFileSync(path, JSON.stringify(mcpJson))
+    persistSession('acc', null, null, path)
+    const updated = JSON.parse(readFileSync(path, 'utf8'))
+    expect(updated.mcpServers.creditkarma.env.CK_REFRESH_TOKEN).toBeUndefined()
+  })
+})
+
+describe('client — cookie and refresh token storage', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('stores cookies from constructor', () => {
+    const c = new CreditKarmaClient('tok', 'ref', 'CKTRKID=abc; ius_session=xyz')
+    expect(c.getCookies()).toBe('CKTRKID=abc; ius_session=xyz')
+  })
+
+  it('setCookies updates stored value', () => {
+    const c = new CreditKarmaClient()
+    c.setCookies('new-cookies')
+    expect(c.getCookies()).toBe('new-cookies')
+  })
+
+  it('refreshAccessToken throws NO_REFRESH_TOKEN when none set', async () => {
+    const c = new CreditKarmaClient()
+    await expect(c.refreshAccessToken()).rejects.toThrow('NO_REFRESH_TOKEN')
+  })
+
+  it('refreshAccessToken calls CK refresh endpoint with correct body', async () => {
+    const c = new CreditKarmaClient('old-token', 'my-refresh', 'CKTRKID=abc123')
+    const spy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ accessToken: 'new-token', refreshToken: 'new-refresh' }), { status: 200 })
+    )
+
+    const token = await c.refreshAccessToken()
+    expect(token).toBe('new-token')
+    expect(c.getToken()).toBe('new-token')
+    expect(c.getRefreshToken()).toBe('new-refresh')
+
+    const [url, opts] = spy.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://www.creditkarma.com/member/oauth2/refresh')
+    expect(JSON.parse(opts.body as string)).toEqual({ refreshToken: 'my-refresh' })
+    const headers = opts.headers as Record<string, string>
+    expect(headers['ck-cookie-id']).toBe('abc123')
+    expect(headers['Cookie']).toBe('CKTRKID=abc123')
+  })
+
+  it('refreshAccessToken throws on HTTP error', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(new Response('', { status: 401 }))
+    await expect(c.refreshAccessToken()).rejects.toThrow('Token refresh failed')
+  })
+
+  it('refreshAccessToken throws when response has no accessToken', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'invalid_token' }), { status: 200 })
+    )
+    await expect(c.refreshAccessToken()).rejects.toThrow('Token refresh error')
   })
 })

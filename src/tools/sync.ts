@@ -18,21 +18,14 @@ export async function handleSyncTransactions(
   args: SyncArgs,
   ctx: AppContext
 ): Promise<SyncResult | string> {
-  // Auto-trigger login if no valid token
+  // Auto-refresh if token expired and we have a refresh token
   if (ctx.client.isTokenExpired()) {
-    const username = process.env.CK_USERNAME
-    const password = process.env.CK_PASSWORD
-    if (!username || !password) {
+    if (!ctx.client.getRefreshToken()) {
       throw new Error(
-        'TOKEN_EXPIRED: No valid token. Call ck_login or ck_set_token first, ' +
-        'or set CK_USERNAME and CK_PASSWORD env vars for auto-login.'
+        'TOKEN_EXPIRED: No valid token. Call ck_login to authenticate.'
       )
     }
-    await ctx.client.login(username, password)
-    return (
-      'MFA challenge initiated. Check your phone/email and call ck_submit_mfa ' +
-      'with your code, then re-run ck_sync_transactions.'
-    )
+    await ctx.client.refreshAccessToken()
   }
 
   const today = utcDateString(new Date())
@@ -74,12 +67,14 @@ export async function handleSyncTransactions(
           id: tx.account.id, name: tx.account.name, type: tx.account.type,
           providerName: tx.account.providerName, display: tx.account.accountTypeAndNumberDisplay
         })
-        upsertCategory(ctx.db, { id: tx.category.id, name: tx.category.name, type: tx.category.type })
-        upsertMerchant(ctx.db, { id: tx.merchant.id, name: tx.merchant.name })
+        if (tx.category) upsertCategory(ctx.db, { id: tx.category.id, name: tx.category.name, type: tx.category.type })
+        if (tx.merchant) upsertMerchant(ctx.db, { id: tx.merchant.id, name: tx.merchant.name })
         upsertTransaction(ctx.db, {
           id: tx.id, date: tx.date, description: tx.description, status: tx.status,
-          amount: tx.amount.value, accountId: tx.account.id, categoryId: tx.category.id,
-          merchantId: tx.merchant.id, rawJson: JSON.stringify(tx)
+          amount: tx.amount.value, accountId: tx.account.id,
+          categoryId: tx.category?.id ?? null,
+          merchantId: tx.merchant?.id ?? null,
+          rawJson: JSON.stringify(tx)
         })
 
         if (exists) { updatedCount++ } else { newCount++ }

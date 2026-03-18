@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url'
 // This works for both Claude Code and Claude Desktop.
 // Does not override vars already set in the environment (e.g. via .mcp.json or claude_desktop_config.json).
 const __dirname = dirname(fileURLToPath(import.meta.url))
-loadDotenv({ path: join(__dirname, '..', '.env'), override: false })
+loadDotenv({ path: join(__dirname, '..', '.env'), override: false, quiet: true })
 
 import { CreditKarmaClient } from './client.js'
 import { initDb } from './db.js'

@@ -8,7 +8,7 @@ import { CreditKarmaClient } from './client.js'
 import { initDb } from './db.js'
 import type { Database } from './db.js'
 
-import { authToolDefinitions, handleSetToken, handleLogin, handleSubmitMfa } from './tools/auth.js'
+import { authToolDefinitions, handleSetToken, handleLogin, handleSetSession } from './tools/auth.js'
 import { syncToolDefinitions, handleSyncTransactions } from './tools/sync.js'
 import {
   queryToolDefinitions,
@@ -35,7 +35,11 @@ async function main() {
   const mcpJsonPath = join(process.cwd(), '.mcp.json')
 
   const ctx: AppContext = {
-    client: new CreditKarmaClient(process.env.CK_TOKEN || undefined),
+    client: new CreditKarmaClient(
+      process.env.CK_TOKEN || undefined,
+      process.env.CK_REFRESH_TOKEN || undefined,
+      process.env.CK_COOKIES || undefined
+    ),
     db: initDb(dbPath),
     mcpJsonPath
   }
@@ -65,8 +69,8 @@ async function dispatch(name: string, args: Record<string, unknown>, ctx: AppCon
   switch (name) {
     // Auth
     case 'ck_set_token': return handleSetToken(args as { token: string }, ctx)
-    case 'ck_login': return handleLogin(args as { username?: string; password?: string }, ctx)
-    case 'ck_submit_mfa': return handleSubmitMfa(args as { code: string }, ctx)
+    case 'ck_login': return handleLogin(args as Record<string, never>, ctx)
+    case 'ck_set_session': return handleSetSession(args as { ckat: string; cookies: string }, ctx)
 
     // Sync
     case 'ck_sync_transactions': return handleSyncTransactions(args as { force_full?: boolean }, ctx)

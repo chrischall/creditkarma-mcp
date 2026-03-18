@@ -134,27 +134,20 @@ describe('ck_sync_transactions', () => {
     expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
   })
 
-  it('auto-triggers login if token is expired', async () => {
+  it('auto-refreshes token if expired and refresh token is available', async () => {
     vi.useRealTimers()
     const expiredClient = new CreditKarmaClient()  // no token
+    expiredClient.setRefreshToken('my-refresh-token')
     ctx.client = expiredClient
-    vi.spyOn(expiredClient, 'login').mockResolvedValueOnce(undefined)
+    vi.spyOn(expiredClient, 'refreshAccessToken').mockResolvedValueOnce('new-access-token')
+    vi.spyOn(expiredClient, 'fetchPage').mockResolvedValueOnce(makePage([]))
 
-    process.env.CK_USERNAME = 'user'
-    process.env.CK_PASSWORD = 'pass'
-
-    const result = await handleSyncTransactions({}, ctx)
-    expect(expiredClient.login).toHaveBeenCalledWith('user', 'pass')
-    expect(typeof result).toBe('string')  // returns login prompt, not sync result
-
-    delete process.env.CK_USERNAME
-    delete process.env.CK_PASSWORD
+    await handleSyncTransactions({}, ctx)
+    expect(expiredClient.refreshAccessToken).toHaveBeenCalled()
   })
 
-  it('throws with instructions if token expired and no credentials set', async () => {
-    delete process.env.CK_USERNAME
-    delete process.env.CK_PASSWORD
-    ctx.client = new CreditKarmaClient()  // no token
+  it('throws with instructions if token expired and no refresh token', async () => {
+    ctx.client = new CreditKarmaClient()  // no token, no refresh token
     await expect(handleSyncTransactions({}, ctx)).rejects.toThrow('TOKEN_EXPIRED')
   })
 

@@ -165,14 +165,50 @@ describe('CreditKarmaClient — fetchPage', () => {
   })
 })
 
-describe('CreditKarmaClient — login/mfa stubs', () => {
-  it('login throws NOT_IMPLEMENTED', async () => {
-    const c = new CreditKarmaClient()
-    await expect(c.login('user', 'pass')).rejects.toThrow('LOGIN_NOT_IMPLEMENTED')
+describe('CreditKarmaClient — refresh token', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('stores refresh token and cookies from constructor', () => {
+    const c = new CreditKarmaClient('access', 'refresh-tok', 'CKTRKID=abc')
+    expect(c.getRefreshToken()).toBe('refresh-tok')
+    expect(c.getCookies()).toBe('CKTRKID=abc')
   })
 
-  it('submitMfa throws NOT_IMPLEMENTED', async () => {
+  it('setRefreshToken updates stored value', () => {
     const c = new CreditKarmaClient()
-    await expect(c.submitMfa('123456')).rejects.toThrow('MFA_NOT_IMPLEMENTED')
+    c.setRefreshToken('new-refresh')
+    expect(c.getRefreshToken()).toBe('new-refresh')
+  })
+
+  it('refreshAccessToken throws NO_REFRESH_TOKEN when none set', async () => {
+    const c = new CreditKarmaClient()
+    await expect(c.refreshAccessToken()).rejects.toThrow('NO_REFRESH_TOKEN')
+  })
+
+  it('refreshAccessToken posts to CK refresh endpoint', async () => {
+    const c = new CreditKarmaClient('old-tok', 'old-refresh', 'CKTRKID=xyz')
+
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ accessToken: 'new-access', refreshToken: 'new-refresh' }), { status: 200 })
+    )
+
+    const token = await c.refreshAccessToken()
+    expect(token).toBe('new-access')
+    expect(c.getToken()).toBe('new-access')
+    expect(c.getRefreshToken()).toBe('new-refresh')
+  })
+
+  it('refreshAccessToken throws on HTTP error', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(new Response('', { status: 401 }))
+    await expect(c.refreshAccessToken()).rejects.toThrow('Token refresh failed')
+  })
+
+  it('refreshAccessToken throws on error response body', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'invalid_token' }), { status: 200 })
+    )
+    await expect(c.refreshAccessToken()).rejects.toThrow('Token refresh error')
   })
 })

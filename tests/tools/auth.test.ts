@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { writeFileSync, readFileSync, mkdirSync, rmSync } from 'fs'
+import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { handleSetToken, handleSetSession, persistSession } from '../../src/tools/auth.js'
@@ -38,19 +38,6 @@ describe('ck_set_token', () => {
   it('returns success message', async () => {
     const result = await handleSetToken({ token: 'mytoken' }, ctx)
     expect(result).toContain('Token set successfully')
-  })
-
-  it('returns Warning if .mcp.json does not exist but still sets token', async () => {
-    const result = await handleSetToken({ token: 'tok' }, ctx)
-    expect(ctx.client.getToken()).toBe('tok')
-    expect(result).toContain('Warning')
-  })
-
-  it('returns Warning if .mcp.json lacks expected key path but still sets token', async () => {
-    writeFileSync(ctx.mcpJsonPath, JSON.stringify({ other: true }))
-    const result = await handleSetToken({ token: 'tok' }, ctx)
-    expect(ctx.client.getToken()).toBe('tok')
-    expect(result).toContain('Warning')
   })
 })
 
@@ -96,21 +83,24 @@ describe('ck_set_session', () => {
     expect(ctx.client.getRefreshToken()).toBe('refresh-jwt')
   })
 
-  it('persists CK_COOKIES to .mcp.json', async () => {
-    const mcpJson = {
-      mcpServers: { creditkarma: { command: 'node', args: ['dist/index.js'], env: { CK_COOKIES: '' } } }
-    }
-    writeFileSync(ctx.mcpJsonPath, JSON.stringify(mcpJson, null, 2))
-
+  it('persists CK_COOKIES to .env', async () => {
     await handleSetSession({ cookies: 'CKAT=acc-tok%3Bref-tok' }, ctx)
 
-    const updated = JSON.parse(readFileSync(ctx.mcpJsonPath, 'utf8'))
-    expect(updated.mcpServers.creditkarma.env.CK_COOKIES).toBe('CKAT=acc-tok%3Bref-tok')
+    const envPath = join(tmpDir, '.env')
+    const contents = readFileSync(envPath, 'utf8')
+    expect(contents).toContain('CK_COOKIES=CKAT=acc-tok%3Bref-tok')
   })
 
-  it('returns Warning when .mcp.json is missing', async () => {
-    const result = await handleSetSession({ cookies: 'CKAT=a%3Br' }, ctx)
-    expect(result).toContain('Warning')
+  it('updates existing CK_COOKIES line in .env', async () => {
+    const envPath = join(tmpDir, '.env')
+    writeFileSync(envPath, 'CK_COOKIES=old-value\nOTHER=x\n')
+
+    await handleSetSession({ cookies: 'CKAT=new%3Bnew' }, ctx)
+
+    const contents = readFileSync(envPath, 'utf8')
+    expect(contents).toContain('CK_COOKIES=CKAT=new%3Bnew')
+    expect(contents).toContain('OTHER=x')
+    expect(contents).not.toContain('old-value')
   })
 })
 
@@ -120,29 +110,33 @@ describe('persistSession', () => {
   beforeEach(() => { tmpDir = makeTmpDir() })
   afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }) })
 
-  it('returns Warning when .mcp.json contains invalid JSON', () => {
-    const path = join(tmpDir, '.mcp.json')
-    writeFileSync(path, '{ not valid json }}}')
-    const result = persistSession('cookies=val', path)
-    expect(result).toContain('could not be parsed')
+  it('creates .env with CK_COOKIES when file does not exist', () => {
+    const mcpJsonPath = join(tmpDir, '.mcp.json')
+    persistSession('CKAT=tok', mcpJsonPath)
+    const contents = readFileSync(join(tmpDir, '.env'), 'utf8')
+    expect(contents).toContain('CK_COOKIES=CKAT=tok')
   })
 
-  it('persists CK_COOKIES when provided', () => {
-    const path = join(tmpDir, '.mcp.json')
-    const mcpJson = { mcpServers: { creditkarma: { env: { CK_COOKIES: '' } } } }
-    writeFileSync(path, JSON.stringify(mcpJson))
-    persistSession('CKAT=tok', path)
-    const updated = JSON.parse(readFileSync(path, 'utf8'))
-    expect(updated.mcpServers.creditkarma.env.CK_COOKIES).toBe('CKAT=tok')
+  it('replaces existing CK_COOKIES line in .env', () => {
+    const mcpJsonPath = join(tmpDir, '.mcp.json')
+    writeFileSync(join(tmpDir, '.env'), 'CK_COOKIES=old\nOTHER=x\n')
+    persistSession('CKAT=new', mcpJsonPath)
+    const contents = readFileSync(join(tmpDir, '.env'), 'utf8')
+    expect(contents).toContain('CK_COOKIES=CKAT=new')
+    expect(contents).toContain('OTHER=x')
+    expect(contents).not.toContain('old')
   })
 
-  it('does not write CK_COOKIES when null', () => {
-    const path = join(tmpDir, '.mcp.json')
-    const mcpJson = { mcpServers: { creditkarma: { env: { CK_COOKIES: 'old' } } } }
-    writeFileSync(path, JSON.stringify(mcpJson))
-    persistSession(null, path)
-    const updated = JSON.parse(readFileSync(path, 'utf8'))
-    expect(updated.mcpServers.creditkarma.env.CK_COOKIES).toBe('old')
+  it('returns null (no warning) on success', () => {
+    const mcpJsonPath = join(tmpDir, '.mcp.json')
+    expect(persistSession('CKAT=tok', mcpJsonPath)).toBeNull()
+  })
+
+  it('returns null without writing when cookies is null', () => {
+    const mcpJsonPath = join(tmpDir, '.mcp.json')
+    const result = persistSession(null, mcpJsonPath)
+    expect(result).toBeNull()
+    expect(existsSync(join(tmpDir, '.env'))).toBe(false)
   })
 })
 

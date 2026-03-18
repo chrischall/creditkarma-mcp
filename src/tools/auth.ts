@@ -1,5 +1,6 @@
 import { exec } from 'child_process'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { join, dirname } from 'path'
 import type { AppContext } from '../index.js'
 
 export interface SetTokenArgs {
@@ -69,31 +70,35 @@ function extractCookieValue(cookieString: string, name: string): string | null {
   return match ? match[1] : null
 }
 
-/** Persist session to .mcp.json. Returns a warning string or null on success. */
+/** Persist session to .env. Returns a warning string or null on success. */
 export function persistSession(
   cookies: string | null,
   mcpJsonPath: string
 ): string | null {
-  if (!existsSync(mcpJsonPath)) {
-    return '.mcp.json not found — session applied in memory only'
+  if (!cookies) return null
+
+  const envPath = join(dirname(mcpJsonPath), '.env')
+
+  let existing = ''
+  if (existsSync(envPath)) {
+    try {
+      existing = readFileSync(envPath, 'utf8')
+    } catch {
+      return '.env could not be read — session applied in memory only'
+    }
   }
 
-  let parsed: unknown
+  // Replace or append CK_COOKIES line
+  const line = `CK_COOKIES=${cookies}`
+  const updated = existing.match(/^CK_COOKIES=/m)
+    ? existing.replace(/^CK_COOKIES=.*/m, line)
+    : existing + (existing.endsWith('\n') || existing === '' ? '' : '\n') + line + '\n'
+
   try {
-    parsed = JSON.parse(readFileSync(mcpJsonPath, 'utf8'))
+    writeFileSync(envPath, updated)
   } catch {
-    return '.mcp.json could not be parsed — session applied in memory only'
+    return '.env could not be written — session applied in memory only'
   }
-
-  const env = (parsed as { mcpServers?: { creditkarma?: { env?: Record<string, string> } } })
-    ?.mcpServers?.creditkarma?.env
-
-  if (!env) {
-    return '.mcp.json lacks mcpServers.creditkarma.env path — session applied in memory only'
-  }
-
-  if (cookies) env.CK_COOKIES = cookies
-  writeFileSync(mcpJsonPath, JSON.stringify(parsed, null, 2))
   return null
 }
 

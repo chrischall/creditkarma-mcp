@@ -1,8 +1,12 @@
+import { config as loadDotenv } from 'dotenv'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { homedir } from 'os'
 import { join } from 'path'
+
+// Load .env from the project directory; don't override vars already set by .mcp.json
+loadDotenv({ path: join(process.cwd(), '.env'), override: false })
 
 import { CreditKarmaClient } from './client.js'
 import { initDb } from './db.js'

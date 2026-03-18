@@ -108,7 +108,8 @@ export const persistTokens = persistSession
 export const authToolDefinitions = [
   {
     name: 'ck_set_token',
-    description: 'Manually set the Credit Karma bearer token. Updates in-memory state and persists to .mcp.json.',
+    description: 'Manually set the Credit Karma bearer token. Updates in-memory state and persists to .env.',
+    annotations: { readOnlyHint: false },
     inputSchema: {
       type: 'object' as const,
       properties: { token: { type: 'string', description: 'Bearer token from browser Network tab' } },
@@ -118,6 +119,7 @@ export const authToolDefinitions = [
   {
     name: 'ck_login',
     description: 'Open the Credit Karma login page in the browser. After logging in, use ck_set_session to store the captured cookies.',
+    annotations: { readOnlyHint: false },
     inputSchema: {
       type: 'object' as const,
       properties: {}
@@ -126,6 +128,7 @@ export const authToolDefinitions = [
   {
     name: 'ck_set_session',
     description: 'Store a Credit Karma session to enable automatic token refresh. Accepts any of: (1) the raw CKAT cookie value, (2) the full Cookie header string from any creditkarma.com request, or (3) just "CKAT=<value>". Find CKAT in Chrome DevTools → Application → Cookies → creditkarma.com, or copy the Cookie request header from the Network tab.',
+    annotations: { readOnlyHint: false },
     inputSchema: {
       type: 'object' as const,
       properties: {

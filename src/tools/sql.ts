@@ -27,6 +27,7 @@ export const sqlToolDefinitions = [
       'Execute a raw SQL SELECT query against the transactions database. ' +
       'Non-SELECT statements (INSERT, UPDATE, DELETE, DROP, etc.) are rejected. ' +
       'Tables: transactions, accounts, categories, merchants, sync_state.',
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: 'object' as const,
       properties: {

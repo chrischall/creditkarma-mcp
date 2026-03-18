@@ -134,6 +134,7 @@ export const syncToolDefinitions = [
       'Sync Credit Karma transactions into the local SQLite database. ' +
       'Incremental by default (fetches since last sync + 30-day overlap for updates). ' +
       'If no valid token, initiates the login/MFA flow automatically.',
+    annotations: { readOnlyHint: false },
     inputSchema: {
       type: 'object' as const,
       properties: {

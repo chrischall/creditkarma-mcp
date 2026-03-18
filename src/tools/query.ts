@@ -69,7 +69,7 @@ function queryTransactions(db: Database, filters: ListFilters): ListResult {
     ${where}
     ORDER BY t.date DESC
     LIMIT ? OFFSET ?
-  `).all(...params, limit, offset) as QueryTransactionRow[]
+  `).all(...params, limit, offset) as unknown as QueryTransactionRow[]
 
   return { transactions: rows, total: countRow.count, offset, limit }
 }

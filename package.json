@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp src/transaction.graphql dist/",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run",

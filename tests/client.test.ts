@@ -140,6 +140,16 @@ describe('CreditKarmaClient — fetchPage', () => {
     ).rejects.toThrow('TOKEN_EXPIRED')
   })
 
+  it('throws HTTP error if retry after 429 returns non-200/401 status', async () => {
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(mockResponse(429))
+      .mockResolvedValueOnce(mockResponse(503))
+
+    await expect(
+      Promise.all([client.fetchPage(), vi.runAllTimersAsync()])
+    ).rejects.toThrow('HTTP 503')
+  })
+
   it('throws HTTP error on non-200/401/429 status', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(mockResponse(500))
     await expect(client.fetchPage()).rejects.toThrow('HTTP 500')

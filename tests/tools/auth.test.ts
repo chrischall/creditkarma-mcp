@@ -106,6 +106,32 @@ describe('ck_login', () => {
   })
 })
 
+describe('persistToken — invalid JSON', () => {
+  let ctx: AppContext
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir()
+    ctx = {
+      client: new CreditKarmaClient(),
+      db: initDb(':memory:'),
+      mcpJsonPath: join(tmpDir, '.mcp.json')
+    }
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('returns Warning when .mcp.json contains invalid JSON', async () => {
+    writeFileSync(ctx.mcpJsonPath, '{ not valid json }}}')
+    const result = await handleSetToken({ token: 'tok' }, ctx)
+    expect(ctx.client.getToken()).toBe('tok')
+    expect(result).toContain('Warning')
+    expect(result).toContain('could not be parsed')
+  })
+})
+
 describe('ck_submit_mfa', () => {
   let ctx: AppContext
   let tmpDir: string

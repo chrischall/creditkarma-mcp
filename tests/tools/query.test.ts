@@ -226,6 +226,33 @@ describe('ck_get_spending_by_merchant', () => {
   })
 })
 
+describe('ck_get_spending_by_merchant — date filters', () => {
+  let ctx: AppContext
+
+  beforeEach(() => {
+    const db = initDb(':memory:')
+    seedDb(db)
+    ctx = makeCtx(db)
+  })
+
+  it('filters by start_date', async () => {
+    const result = await handleGetSpendingByMerchant({ start_date: '2024-02-01' }, ctx)
+    const names = result.rows.map(r => r.merchant)
+    // Feb txs: tx1 (Starbucks), tx2 (Amazon), tx5 (Starbucks) — tx3 (Target, Jan) excluded
+    expect(names).toContain('Amazon')
+    expect(names).toContain('Starbucks')
+    expect(names).not.toContain('Target')
+  })
+
+  it('filters by end_date', async () => {
+    const result = await handleGetSpendingByMerchant({ end_date: '2024-01-31' }, ctx)
+    const names = result.rows.map(r => r.merchant)
+    // Jan txs: tx3 (Target, debit), tx4 (Starbucks, credit — excluded)
+    expect(names).toContain('Target')
+    expect(names).not.toContain('Amazon')
+  })
+})
+
 describe('ck_get_account_summary', () => {
   let ctx: AppContext
 
@@ -262,5 +289,22 @@ describe('ck_get_account_summary', () => {
     const result = await handleGetAccountSummary({}, ctx)
     const chase = result.rows.find(r => r.account === 'Chase Checking')!
     expect(chase.count).toBe(4)  // tx1, tx3, tx4, tx5
+  })
+
+  it('filters by end_date', async () => {
+    const result = await handleGetAccountSummary({ end_date: '2024-01-31' }, ctx)
+    const chase = result.rows.find(r => r.account === 'Chase Checking')!
+    // Jan transactions for Chase: tx3 (-45.00 debit), tx4 (+20.00 credit)
+    expect(chase.debits).toBeCloseTo(45.00)
+    expect(chase.credits).toBeCloseTo(20.00)
+    expect(chase.count).toBe(2)
+  })
+
+  it('filters by both start_date and end_date', async () => {
+    const result = await handleGetAccountSummary({ start_date: '2024-02-10', end_date: '2024-02-11' }, ctx)
+    // Feb 10-11: tx1 (Chase, -5.50), tx2 (Amex, -99.99)
+    const chase = result.rows.find(r => r.account === 'Chase Checking')!
+    expect(chase.debits).toBeCloseTo(5.50)
+    expect(chase.count).toBe(1)
   })
 })

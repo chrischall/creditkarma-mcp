@@ -1,3 +1,7 @@
+import { readFileSync } from 'fs'
+import { fileURLToPath } from 'url'
+import { join, dirname } from 'path'
+
 const TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
 export const GRAPHQL_ENDPOINT = 'https://api.creditkarma.com/graphql'
 
@@ -107,7 +111,7 @@ export class CreditKarmaClient {
     return fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${this.token ?? ''}`,
+        'Authorization': `Bearer ${this.token!}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(body)
@@ -116,58 +120,12 @@ export class CreditKarmaClient {
 }
 
 // ---------------------------------------------------------------------------
-// GraphQL query (ported from Ruby script at
+// GraphQL query (extracted from Ruby script at
 // /Users/chris/git/creditkarma_export_transactions/fetch_credit_karma_transactions)
 // ---------------------------------------------------------------------------
 
-/**
- * TODO: Extract the full GraphQL query from the Ruby script.
- * Search for the query string in the Ruby file and replace this placeholder.
- * The Ruby file is at:
- * /Users/chris/git/creditkarma_export_transactions/fetch_credit_karma_transactions
- */
-export const TRANSACTION_QUERY = `
-  query GetTransactions($input: TransactionPageInput) {
-    prime {
-      transactionsHub {
-        transactionPage(input: $input) {
-          transactions {
-            id
-            date
-            description
-            status
-            amount {
-              value
-              asCurrencyString
-            }
-            account {
-              id
-              name
-              type
-              providerName
-              accountTypeAndNumberDisplay
-            }
-            category {
-              id
-              name
-              type
-            }
-            merchant {
-              id
-              name
-            }
-          }
-          pageInfo {
-            startCursor
-            endCursor
-            hasNextPage
-            hasPreviousPage
-          }
-        }
-      }
-    }
-  }
-`
+const _dir = dirname(fileURLToPath(import.meta.url))
+export const TRANSACTION_QUERY = readFileSync(join(_dir, 'transaction.graphql'), 'utf8')
 
 function buildVariables(afterCursor?: string): Record<string, unknown> {
   return {

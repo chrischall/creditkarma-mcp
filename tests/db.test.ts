@@ -93,6 +93,20 @@ describe('initDb — file-based tests', () => {
     db2.close()
   })
 
+  it('handles schema_version table existing but empty (version defaults to 0)', () => {
+    // Manually create schema_version with no rows to exercise the `?? 0` branch
+    const BetterSqlite3 = require('better-sqlite3')
+    const bare = new BetterSqlite3(dbPath)
+    bare.exec('CREATE TABLE schema_version (version INTEGER PRIMARY KEY)')
+    bare.close()
+
+    // initDb should detect version=0 (from ??) and run all migrations
+    const db = initDb(dbPath)
+    const row = db.prepare('SELECT version FROM schema_version').get() as { version: number }
+    expect(row.version).toBe(1)
+    db.close()
+  })
+
   it('creates parent directory if it does not exist', () => {
     const nestedPath = join(tmpdir(), `ck-newdir-${Date.now()}`, 'sub', 'transactions.db')
     const db = initDb(nestedPath)

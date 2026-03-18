@@ -40,18 +40,6 @@ describe('ck_set_token', () => {
     expect(result).toContain('Token set successfully')
   })
 
-  it('persists token to .mcp.json when file exists', async () => {
-    const mcpJson = {
-      mcpServers: { creditkarma: { command: 'node', args: ['dist/index.js'], env: { CK_TOKEN: '' } } }
-    }
-    writeFileSync(ctx.mcpJsonPath, JSON.stringify(mcpJson, null, 2))
-
-    await handleSetToken({ token: 'saved-token' }, ctx)
-
-    const updated = JSON.parse(readFileSync(ctx.mcpJsonPath, 'utf8'))
-    expect(updated.mcpServers.creditkarma.env.CK_TOKEN).toBe('saved-token')
-  })
-
   it('returns Warning if .mcp.json does not exist but still sets token', async () => {
     const result = await handleSetToken({ token: 'tok' }, ctx)
     expect(ctx.client.getToken()).toBe('tok')
@@ -83,41 +71,46 @@ describe('ck_set_session', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('splits CKAT cookie and sets access + refresh tokens on client', async () => {
-    await handleSetSession({ ckat: 'access-jwt;refresh-jwt', cookies: 'ck=1' }, ctx)
+  it('accepts full cookie string and extracts CKAT', async () => {
+    await handleSetSession({ cookies: 'other=x; CKAT=access-jwt%3Brefresh-jwt; foo=bar' }, ctx)
     expect(ctx.client.getToken()).toBe('access-jwt')
     expect(ctx.client.getRefreshToken()).toBe('refresh-jwt')
-    expect(ctx.client.getCookies()).toBe('ck=1')
+    expect(ctx.client.getCookies()).toBe('other=x; CKAT=access-jwt%3Brefresh-jwt; foo=bar')
   })
 
-  it('handles URL-encoded semicolon in CKAT value', async () => {
-    await handleSetSession({ ckat: 'access-jwt%3Brefresh-jwt', cookies: 'ck=1' }, ctx)
+  it('accepts CKAT=<value> format', async () => {
+    await handleSetSession({ cookies: 'CKAT=access-jwt%3Brefresh-jwt' }, ctx)
     expect(ctx.client.getToken()).toBe('access-jwt')
     expect(ctx.client.getRefreshToken()).toBe('refresh-jwt')
   })
 
-  it('persists all three to .mcp.json', async () => {
+  it('accepts raw CKAT value (no key prefix)', async () => {
+    await handleSetSession({ cookies: 'access-jwt%3Brefresh-jwt' }, ctx)
+    expect(ctx.client.getToken()).toBe('access-jwt')
+    expect(ctx.client.getRefreshToken()).toBe('refresh-jwt')
+  })
+
+  it('accepts raw CKAT value with literal semicolon', async () => {
+    await handleSetSession({ cookies: 'access-jwt;refresh-jwt' }, ctx)
+    expect(ctx.client.getToken()).toBe('access-jwt')
+    expect(ctx.client.getRefreshToken()).toBe('refresh-jwt')
+  })
+
+  it('persists CK_COOKIES to .mcp.json', async () => {
     const mcpJson = {
-      mcpServers: { creditkarma: { command: 'node', args: ['dist/index.js'], env: { CK_TOKEN: '' } } }
+      mcpServers: { creditkarma: { command: 'node', args: ['dist/index.js'], env: { CK_COOKIES: '' } } }
     }
     writeFileSync(ctx.mcpJsonPath, JSON.stringify(mcpJson, null, 2))
 
-    await handleSetSession({ ckat: 'acc-tok;ref-tok', cookies: 'ck=1' }, ctx)
+    await handleSetSession({ cookies: 'CKAT=acc-tok%3Bref-tok' }, ctx)
 
     const updated = JSON.parse(readFileSync(ctx.mcpJsonPath, 'utf8'))
-    expect(updated.mcpServers.creditkarma.env.CK_TOKEN).toBe('acc-tok')
-    expect(updated.mcpServers.creditkarma.env.CK_REFRESH_TOKEN).toBe('ref-tok')
-    expect(updated.mcpServers.creditkarma.env.CK_COOKIES).toBe('ck=1')
+    expect(updated.mcpServers.creditkarma.env.CK_COOKIES).toBe('CKAT=acc-tok%3Bref-tok')
   })
 
   it('returns Warning when .mcp.json is missing', async () => {
-    const result = await handleSetSession({ ckat: 'a;r', cookies: 'c' }, ctx)
+    const result = await handleSetSession({ cookies: 'CKAT=a%3Br' }, ctx)
     expect(result).toContain('Warning')
-  })
-
-  it('returns error message when CKAT is empty', async () => {
-    const result = await handleSetSession({ ckat: '', cookies: 'c' }, ctx)
-    expect(result).toContain('empty or malformed')
   })
 })
 
@@ -130,26 +123,26 @@ describe('persistSession', () => {
   it('returns Warning when .mcp.json contains invalid JSON', () => {
     const path = join(tmpDir, '.mcp.json')
     writeFileSync(path, '{ not valid json }}}')
-    const result = persistSession('tok', null, null, path)
+    const result = persistSession('cookies=val', path)
     expect(result).toContain('could not be parsed')
   })
 
-  it('persists refresh token when provided', () => {
+  it('persists CK_COOKIES when provided', () => {
     const path = join(tmpDir, '.mcp.json')
-    const mcpJson = { mcpServers: { creditkarma: { env: { CK_TOKEN: '' } } } }
+    const mcpJson = { mcpServers: { creditkarma: { env: { CK_COOKIES: '' } } } }
     writeFileSync(path, JSON.stringify(mcpJson))
-    persistSession('acc', 'ref', null, path)
+    persistSession('CKAT=tok', path)
     const updated = JSON.parse(readFileSync(path, 'utf8'))
-    expect(updated.mcpServers.creditkarma.env.CK_REFRESH_TOKEN).toBe('ref')
+    expect(updated.mcpServers.creditkarma.env.CK_COOKIES).toBe('CKAT=tok')
   })
 
-  it('does not write CK_REFRESH_TOKEN when null', () => {
+  it('does not write CK_COOKIES when null', () => {
     const path = join(tmpDir, '.mcp.json')
-    const mcpJson = { mcpServers: { creditkarma: { env: { CK_TOKEN: '' } } } }
+    const mcpJson = { mcpServers: { creditkarma: { env: { CK_COOKIES: 'old' } } } }
     writeFileSync(path, JSON.stringify(mcpJson))
-    persistSession('acc', null, null, path)
+    persistSession(null, path)
     const updated = JSON.parse(readFileSync(path, 'utf8'))
-    expect(updated.mcpServers.creditkarma.env.CK_REFRESH_TOKEN).toBeUndefined()
+    expect(updated.mcpServers.creditkarma.env.CK_COOKIES).toBe('old')
   })
 })
 

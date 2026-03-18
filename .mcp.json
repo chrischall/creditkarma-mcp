@@ -1,12 +1,10 @@
 {
   "mcpServers": {
     "creditkarma": {
-      "command": "node",
+      "command": "/opt/homebrew/bin/node",
       "args": ["dist/index.js"],
       "env": {
-        "CK_TOKEN": "",
-        "CK_USERNAME": "",
-        "CK_PASSWORD": "",
+        "CK_COOKIES": "",
         "CK_DB_PATH": ""
       }
     }

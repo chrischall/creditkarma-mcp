@@ -30,16 +30,29 @@ const allTools = [
   ...sqlToolDefinitions
 ]
 
+function extractCookieValue(cookieString: string, name: string): string | undefined {
+  const match = cookieString.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`))
+  return match ? match[1] : undefined
+}
+
 async function main() {
   const dbPath = process.env.CK_DB_PATH || join(homedir(), '.creditkarma-mcp', 'transactions.db')
   const mcpJsonPath = join(process.cwd(), '.mcp.json')
 
+  const cookies = process.env.CK_COOKIES || undefined
+
+  // Bootstrap tokens from CK_COOKIES: accepts raw CKAT, CKAT=<value>, or full cookie string
+  let token: string | undefined
+  let refreshToken: string | undefined
+  if (cookies) {
+    const ckat = extractCookieValue(cookies, 'CKAT') ?? cookies.trim()
+    const parts = ckat.replace('%3B', ';').split(';')
+    token = parts[0]?.trim() || undefined
+    refreshToken = parts[1]?.trim() || undefined
+  }
+
   const ctx: AppContext = {
-    client: new CreditKarmaClient(
-      process.env.CK_TOKEN || undefined,
-      process.env.CK_REFRESH_TOKEN || undefined,
-      process.env.CK_COOKIES || undefined
-    ),
+    client: new CreditKarmaClient(token, refreshToken, cookies),
     db: initDb(dbPath),
     mcpJsonPath
   }
@@ -70,7 +83,7 @@ async function dispatch(name: string, args: Record<string, unknown>, ctx: AppCon
     // Auth
     case 'ck_set_token': return handleSetToken(args as { token: string }, ctx)
     case 'ck_login': return handleLogin(args as Record<string, never>, ctx)
-    case 'ck_set_session': return handleSetSession(args as { ckat: string; cookies: string }, ctx)
+    case 'ck_set_session': return handleSetSession(args as { cookies: string }, ctx)
 
     // Sync
     case 'ck_sync_transactions': return handleSyncTransactions(args as { force_full?: boolean }, ctx)

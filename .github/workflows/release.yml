@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+      - name: Package skill
+        run: |
+          python3 - <<'PYEOF'
+          import zipfile, pathlib
+
+          skill_name = "creditkarma-mcp"
+          out = pathlib.Path(f"{skill_name}.skill")
+
+          with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+              zf.write(pathlib.Path("SKILL.md"), f"{skill_name}/SKILL.md")
+
+          print(f"Packaged {out} ({out.stat().st_size} bytes)")
+          PYEOF
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: creditkarma-mcp.skill
+          generate_release_notes: true

@@ -188,27 +188,23 @@ export const TRANSACTION_QUERY = readFileSync(join(_dir, 'transaction.graphql'),
 function buildVariables(afterCursor?: string): Record<string, unknown> {
   return {
     input: {
-      paginationInput: {
-        after: afterCursor ?? null,
-        first: 50
-      }
+      paginationInput: { afterCursor: afterCursor ?? null },
+      categoryInput: { categoryId: null, primeCategoryType: null },
+      datePeriodInput: { datePeriod: null },
+      accountInput: {}
     }
   }
 }
 
 function parseTransactionPage(json: unknown): TransactionPage {
   const top = json as Record<string, unknown>
-  if (top['errorCode']) throw new Error(`TOKEN_EXPIRED`)
-  const data = json as {
-    data: {
-      prime: {
-        transactionsHub: {
-          transactionPage: TransactionPage
-        }
-      }
-    }
-  }
-  return data.data.prime.transactionsHub.transactionPage
+  // CK returns errorCode for some auth failures, errors array for others
+  if (top['errorCode'] || top['errors']) throw new Error(`TOKEN_EXPIRED`)
+  const data = (top['data'] ?? {}) as Record<string, unknown>
+  const prime = data['prime'] as Record<string, unknown> | undefined
+  if (!prime) throw new Error(`TOKEN_EXPIRED`)
+  const hub = prime['transactionsHub'] as Record<string, unknown>
+  return (hub['transactionPage']) as TransactionPage
 }
 
 function sleep(ms: number): Promise<void> {

@@ -19,13 +19,8 @@ export async function handleSyncTransactions(
   ctx: AppContext
 ): Promise<SyncResult | string> {
   // Auto-refresh if token expired and we have a refresh token
-  if (ctx.client.isTokenExpired()) {
-    if (!ctx.client.getRefreshToken()) {
-      throw new Error(
-        'TOKEN_EXPIRED: No valid token. Call ck_login to authenticate.'
-      )
-    }
-    await ctx.client.refreshAccessToken()
+  if (ctx.client.isTokenExpired() || !ctx.client.getToken()) {
+    await refreshOrThrow(ctx)
   }
 
   const today = utcDateString(new Date())
@@ -52,9 +47,19 @@ export async function handleSyncTransactions(
     try {
       page = await ctx.client.fetchPage(cursor)
     } catch (err) {
-      // Save cursor so we can resume on next attempt
-      if (cursor) setSyncState(ctx.db, 'last_cursor', cursor)
-      throw err
+      if (err instanceof Error && err.message === 'TOKEN_EXPIRED') {
+        // JWT may have expired mid-sync — try refresh once then retry page
+        try {
+          await refreshOrThrow(ctx)
+          page = await ctx.client.fetchPage(cursor)
+        } catch (retryErr) {
+          if (cursor) setSyncState(ctx.db, 'last_cursor', cursor)
+          throw retryErr
+        }
+      } else {
+        if (cursor) setSyncState(ctx.db, 'last_cursor', cursor)
+        throw err
+      }
     }
 
     ctx.db.transaction(() => {
@@ -97,6 +102,13 @@ export async function handleSyncTransactions(
   ctx.db.prepare("DELETE FROM sync_state WHERE key = 'last_cursor'").run()
 
   return { new: newCount, updated: updatedCount, total: totalCount }
+}
+
+async function refreshOrThrow(ctx: AppContext): Promise<void> {
+  if (!ctx.client.getRefreshToken()) {
+    throw new Error('TOKEN_EXPIRED: No valid token. Call ck_login to authenticate.')
+  }
+  await ctx.client.refreshAccessToken()
 }
 
 function subtractDays(dateStr: string, days: number): string {

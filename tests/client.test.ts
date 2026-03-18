@@ -161,7 +161,7 @@ describe('CreditKarmaClient — fetchPage', () => {
     )
     await client.fetchPage('my-cursor')
     const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string)
-    expect(body.variables.input.paginationInput.after).toBe('my-cursor')
+    expect(body.variables.input.paginationInput.afterCursor).toBe('my-cursor')
   })
 })
 

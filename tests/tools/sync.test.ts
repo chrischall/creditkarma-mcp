@@ -157,4 +157,10 @@ describe('ck_sync_transactions', () => {
     ctx.client = new CreditKarmaClient()  // no token
     await expect(handleSyncTransactions({}, ctx)).rejects.toThrow('TOKEN_EXPIRED')
   })
+
+  it('does not save last_cursor when first page fetch fails', async () => {
+    vi.spyOn(ctx.client, 'fetchPage').mockRejectedValueOnce(new Error('TOKEN_EXPIRED'))
+    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow('TOKEN_EXPIRED')
+    expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
+  })
 })

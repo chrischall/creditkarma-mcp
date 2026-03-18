@@ -106,7 +106,7 @@ export async function handleGetRecentTransactions(args: RecentArgs, ctx: AppCont
 }
 
 // ---------------------------------------------------------------------------
-// Stubs for aggregate tools (implemented in Task 10)
+// ck_get_spending_by_category
 // ---------------------------------------------------------------------------
 
 export interface SpendingByCategoryArgs {
@@ -114,12 +114,42 @@ export interface SpendingByCategoryArgs {
   end_date?: string
   account?: string
 }
+
 export interface SpendingByCategoryResult {
   rows: Array<{ category: string; total: number; count: number }>
 }
-export async function handleGetSpendingByCategory(_args: SpendingByCategoryArgs, _ctx: AppContext): Promise<SpendingByCategoryResult> {
-  throw new Error('Not implemented yet')
+
+export async function handleGetSpendingByCategory(
+  args: SpendingByCategoryArgs,
+  ctx: AppContext
+): Promise<SpendingByCategoryResult> {
+  const conditions: string[] = ['t.amount < 0']  // debits only
+  const params: (string | number)[] = []
+
+  if (args.start_date) { conditions.push('t.date >= ?'); params.push(args.start_date) }
+  if (args.end_date) { conditions.push('t.date <= ?'); params.push(args.end_date) }
+  if (args.account) { conditions.push('a.name LIKE ? ESCAPE \'\\\''); params.push(`%${args.account.replace(/[%_\\]/g, '\\$&')}%`) }
+
+  const where = `WHERE ${conditions.join(' AND ')}`
+
+  const rows = ctx.db.prepare(`
+    SELECT COALESCE(c.name, 'Uncategorized') as category,
+           SUM(ABS(t.amount)) as total,
+           COUNT(*) as count
+    FROM transactions t
+    LEFT JOIN accounts a ON t.account_id = a.id
+    LEFT JOIN categories c ON t.category_id = c.id
+    ${where}
+    GROUP BY c.id, c.name
+    ORDER BY total DESC
+  `).all(...params) as Array<{ category: string; total: number; count: number }>
+
+  return { rows }
 }
+
+// ---------------------------------------------------------------------------
+// ck_get_spending_by_merchant
+// ---------------------------------------------------------------------------
 
 export interface SpendingByMerchantArgs {
   start_date?: string
@@ -127,20 +157,151 @@ export interface SpendingByMerchantArgs {
   category?: string
   limit?: number
 }
+
 export interface SpendingByMerchantResult {
   rows: Array<{ merchant: string; total: number; count: number }>
 }
-export async function handleGetSpendingByMerchant(_args: SpendingByMerchantArgs, _ctx: AppContext): Promise<SpendingByMerchantResult> {
-  throw new Error('Not implemented yet')
+
+export async function handleGetSpendingByMerchant(
+  args: SpendingByMerchantArgs,
+  ctx: AppContext
+): Promise<SpendingByMerchantResult> {
+  const conditions: string[] = ['t.amount < 0']
+  const params: (string | number)[] = []
+
+  if (args.start_date) { conditions.push('t.date >= ?'); params.push(args.start_date) }
+  if (args.end_date) { conditions.push('t.date <= ?'); params.push(args.end_date) }
+  if (args.category) { conditions.push('c.name LIKE ? ESCAPE \'\\\''); params.push(`%${args.category.replace(/[%_\\]/g, '\\$&')}%`) }
+
+  const where = `WHERE ${conditions.join(' AND ')}`
+  const limit = args.limit ?? 25
+
+  const rows = ctx.db.prepare(`
+    SELECT COALESCE(m.name, 'Unknown') as merchant,
+           SUM(ABS(t.amount)) as total,
+           COUNT(*) as count
+    FROM transactions t
+    LEFT JOIN accounts a ON t.account_id = a.id
+    LEFT JOIN categories c ON t.category_id = c.id
+    LEFT JOIN merchants m ON t.merchant_id = m.id
+    ${where}
+    GROUP BY m.id, m.name
+    ORDER BY total DESC
+    LIMIT ?
+  `).all(...params, limit) as Array<{ merchant: string; total: number; count: number }>
+
+  return { rows }
 }
+
+// ---------------------------------------------------------------------------
+// ck_get_account_summary
+// ---------------------------------------------------------------------------
 
 export interface AccountSummaryArgs {
   start_date?: string
   end_date?: string
 }
+
 export interface AccountSummaryResult {
   rows: Array<{ account: string; debits: number; credits: number; net: number; count: number }>
 }
-export async function handleGetAccountSummary(_args: AccountSummaryArgs, _ctx: AppContext): Promise<AccountSummaryResult> {
-  throw new Error('Not implemented yet')
+
+export async function handleGetAccountSummary(
+  args: AccountSummaryArgs,
+  ctx: AppContext
+): Promise<AccountSummaryResult> {
+  const conditions: string[] = []
+  const params: (string | number)[] = []
+
+  if (args.start_date) { conditions.push('t.date >= ?'); params.push(args.start_date) }
+  if (args.end_date) { conditions.push('t.date <= ?'); params.push(args.end_date) }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+  const rows = ctx.db.prepare(`
+    SELECT COALESCE(a.name, 'Unknown') as account,
+           SUM(CASE WHEN t.amount < 0 THEN ABS(t.amount) ELSE 0 END) as debits,
+           SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) as credits,
+           SUM(t.amount) as net,
+           COUNT(*) as count
+    FROM transactions t
+    LEFT JOIN accounts a ON t.account_id = a.id
+    ${where}
+    GROUP BY a.id, a.name
+    ORDER BY debits DESC
+  `).all(...params) as Array<{ account: string; debits: number; credits: number; net: number; count: number }>
+
+  return { rows }
 }
+
+// ---------------------------------------------------------------------------
+// Tool definitions for all 5 query tools
+// ---------------------------------------------------------------------------
+
+export const queryToolDefinitions = [
+  {
+    name: 'ck_list_transactions',
+    description: 'List transactions with optional filters. Paginated.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        start_date: { type: 'string', description: 'YYYY-MM-DD' },
+        end_date: { type: 'string', description: 'YYYY-MM-DD' },
+        account: { type: 'string', description: 'Partial account name match' },
+        category: { type: 'string', description: 'Partial category name match' },
+        merchant: { type: 'string', description: 'Partial merchant name match' },
+        status: { type: 'string', description: 'e.g. posted, pending, cancelled' },
+        min_amount: { type: 'number', description: 'Minimum absolute amount' },
+        max_amount: { type: 'number', description: 'Maximum absolute amount' },
+        limit: { type: 'number', description: 'Default 50' },
+        offset: { type: 'number', description: 'Default 0' }
+      }
+    }
+  },
+  {
+    name: 'ck_get_recent_transactions',
+    description: 'Return the N most recent transactions. Convenience shortcut for ck_list_transactions.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        limit: { type: 'number', description: 'Number of transactions to return (default 25)' }
+      }
+    }
+  },
+  {
+    name: 'ck_get_spending_by_category',
+    description: 'Group debit transactions by category and return totals.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        start_date: { type: 'string', description: 'YYYY-MM-DD' },
+        end_date: { type: 'string', description: 'YYYY-MM-DD' },
+        account: { type: 'string', description: 'Partial account name filter' }
+      }
+    }
+  },
+  {
+    name: 'ck_get_spending_by_merchant',
+    description: 'Return top merchants by total debit spend.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        start_date: { type: 'string', description: 'YYYY-MM-DD' },
+        end_date: { type: 'string', description: 'YYYY-MM-DD' },
+        category: { type: 'string', description: 'Partial category name filter' },
+        limit: { type: 'number', description: 'Default 25' }
+      }
+    }
+  },
+  {
+    name: 'ck_get_account_summary',
+    description: 'Return per-account debit, credit, and net totals.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        start_date: { type: 'string', description: 'YYYY-MM-DD' },
+        end_date: { type: 'string', description: 'YYYY-MM-DD' }
+      }
+    }
+  }
+]

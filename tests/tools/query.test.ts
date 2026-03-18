@@ -140,3 +140,127 @@ describe('ck_get_recent_transactions', () => {
     expect(result.transactions[0].date >= result.transactions[1].date).toBe(true)
   })
 })
+
+describe('ck_get_spending_by_category', () => {
+  let ctx: AppContext
+
+  beforeEach(() => {
+    const db = initDb(':memory:')
+    seedDb(db)
+    ctx = makeCtx(db)
+  })
+
+  it('returns spending totals by category (debits only)', async () => {
+    const result = await handleGetSpendingByCategory({}, ctx)
+    const categories = result.rows.map(r => r.category)
+    expect(categories).toContain('Shopping')
+    expect(categories).toContain('Food & Dining')
+    // refund (positive amount) should NOT appear or should have correct sign
+    const food = result.rows.find(r => r.category === 'Food & Dining')!
+    expect(food.total).toBeGreaterThan(0)
+  })
+
+  it('filters by date range', async () => {
+    const result = await handleGetSpendingByCategory({ start_date: '2024-02-01', end_date: '2024-02-28' }, ctx)
+    const categories = result.rows.map(r => r.category)
+    // Feb has: tx1 Starbucks/Food (-$5.50), tx2 Amazon/Shopping (-$99.99), tx5 Starbucks/Food (-$6.00)
+    // Target (Shopping, tx3) is Jan — should NOT appear as a Shopping entry for Feb... but Amazon IS feb
+    expect(categories).toContain('Shopping')   // Amazon tx2 is 2024-02-11
+    expect(categories).toContain('Food & Dining')
+    // tx3 (Target, Jan) is excluded — verify Shopping total is only Amazon, not Amazon+Target
+    const shopping = result.rows.find(r => r.category === 'Shopping')!
+    expect(shopping.count).toBe(1)  // only Amazon (tx2), not Target (tx3 is Jan)
+  })
+
+  it('filters by account', async () => {
+    const result = await handleGetSpendingByCategory({ account: 'Amex' }, ctx)
+    expect(result.rows.length).toBe(1)
+    expect(result.rows[0].category).toBe('Shopping')
+  })
+
+  it('returns rows sorted by total descending', async () => {
+    const result = await handleGetSpendingByCategory({}, ctx)
+    const totals = result.rows.map(r => r.total)
+    expect(totals).toEqual([...totals].sort((a, b) => b - a))
+  })
+
+  it('includes count of transactions per category', async () => {
+    const result = await handleGetSpendingByCategory({}, ctx)
+    const food = result.rows.find(r => r.category === 'Food & Dining')!
+    expect(food.count).toBe(2) // tx1 + tx5 (tx4 is credit, excluded)
+  })
+})
+
+describe('ck_get_spending_by_merchant', () => {
+  let ctx: AppContext
+
+  beforeEach(() => {
+    const db = initDb(':memory:')
+    seedDb(db)
+    ctx = makeCtx(db)
+  })
+
+  it('returns top merchants by debit spend', async () => {
+    const result = await handleGetSpendingByMerchant({}, ctx)
+    const names = result.rows.map(r => r.merchant)
+    expect(names).toContain('Amazon')
+    expect(names).toContain('Starbucks')
+  })
+
+  it('orders by total descending', async () => {
+    const result = await handleGetSpendingByMerchant({}, ctx)
+    const totals = result.rows.map(r => r.total)
+    expect(totals).toEqual([...totals].sort((a, b) => b - a))
+  })
+
+  it('respects limit', async () => {
+    const result = await handleGetSpendingByMerchant({ limit: 2 }, ctx)
+    expect(result.rows).toHaveLength(2)
+  })
+
+  it('filters by category', async () => {
+    const result = await handleGetSpendingByMerchant({ category: 'Shopping' }, ctx)
+    const names = result.rows.map(r => r.merchant)
+    expect(names).toContain('Amazon')
+    expect(names).not.toContain('Starbucks')
+  })
+})
+
+describe('ck_get_account_summary', () => {
+  let ctx: AppContext
+
+  beforeEach(() => {
+    const db = initDb(':memory:')
+    seedDb(db)
+    ctx = makeCtx(db)
+  })
+
+  it('returns per-account debit/credit/net totals', async () => {
+    const result = await handleGetAccountSummary({}, ctx)
+    const chase = result.rows.find(r => r.account === 'Chase Checking')!
+    expect(chase).toBeDefined()
+    expect(chase.debits).toBeGreaterThan(0)
+    expect(chase.credits).toBeGreaterThan(0)
+  })
+
+  it('calculates net as credits - debits', async () => {
+    const result = await handleGetAccountSummary({}, ctx)
+    for (const row of result.rows) {
+      expect(Math.abs(row.net - (row.credits - row.debits))).toBeLessThan(0.01)
+    }
+  })
+
+  it('filters by date range', async () => {
+    const result = await handleGetAccountSummary({ start_date: '2024-02-01' }, ctx)
+    const chase = result.rows.find(r => r.account === 'Chase Checking')!
+    // Only Feb transactions for Chase: tx1 (-5.50), tx5 (-6.00) — tx4 is Jan
+    expect(chase.debits).toBeCloseTo(11.50)
+    expect(chase.credits).toBeCloseTo(0)
+  })
+
+  it('includes transaction count per account', async () => {
+    const result = await handleGetAccountSummary({}, ctx)
+    const chase = result.rows.find(r => r.account === 'Chase Checking')!
+    expect(chase.count).toBe(4)  // tx1, tx3, tx4, tx5
+  })
+})

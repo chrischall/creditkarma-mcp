@@ -103,14 +103,13 @@ The server automatically extracts both the access token and refresh token from t
 
 - **Access token**: ~15 minutes (auto-refreshed transparently)
 - **Refresh token**: ~8 hours
-- When the refresh token expires, call `ck_login` to open the browser and repeat the setup
+- When the refresh token expires, log in to creditkarma.com again, grab the new CKAT cookie, and call `ck_set_session`
 
 ## Available tools
 
 | Tool | What it does |
 |------|-------------|
-| `ck_login` | Open the Credit Karma login page in your browser |
-| `ck_set_session` | Store credentials from your browser cookies |
+| `ck_set_session` | Store credentials from your browser cookies (auto-extracts tokens from CKAT) |
 | `ck_set_token` | Manually set a bearer token |
 | `ck_sync_transactions` | Sync transactions into the local SQLite database |
 | `ck_list_transactions` | List transactions with filters (date, account, category, merchant, amount) |
@@ -147,7 +146,7 @@ sync_state   (key, value)
 
 ## Troubleshooting
 
-**"TOKEN_EXPIRED"** — your refresh token has expired. Call `ck_login` to re-authenticate.
+**"TOKEN_EXPIRED"** — your refresh token has expired. Log in to creditkarma.com, grab the new CKAT cookie, and call `ck_set_session`.
 
 **Sync returns 0 transactions** — check that your `CK_COOKIES` value is fresh. CKAT cookies expire after ~8 hours.
 
@@ -178,7 +177,7 @@ src/
   db.ts                 SQLite schema and upsert helpers
   transaction.graphql   GraphQL query for transactions
   tools/
-    auth.ts             ck_login, ck_set_session, ck_set_token
+    auth.ts             ck_set_session, ck_set_token
     sync.ts             ck_sync_transactions
     query.ts            ck_list_transactions, ck_get_recent_transactions, etc.
     sql.ts              ck_query_sql

@@ -43,14 +43,13 @@ Call `ck_set_session` with your cookie value to store credentials and enable aut
 
 - Access token: ~15 min TTL, auto-refreshed transparently
 - Refresh token: ~8 hours TTL
-- When expired: call `ck_login` to re-authenticate
+- When expired: log in to creditkarma.com, grab the new CKAT cookie, call `ck_set_session`
 
 ## Tools
 
 ### Auth
 | Tool | Description |
 |------|-------------|
-| `ck_login` | Open Credit Karma login in browser; follow with `ck_set_session` |
 | `ck_set_session(cookies)` | Store credentials — accepts CKAT value, `CKAT=<value>`, or full Cookie header |
 | `ck_set_token(token)` | Manually set a bearer token |
 
@@ -72,8 +71,8 @@ Call `ck_set_session` with your cookie value to store credentials and enable aut
 ## Workflows
 
 **First-time setup:**
-1. `ck_login` → log in at creditkarma.com
-2. Copy CKAT cookie from DevTools
+1. Log in to [creditkarma.com](https://www.creditkarma.com) in Chrome
+2. DevTools → Application → Cookies → copy the `CKAT` value
 3. `ck_set_session(cookies)` → credentials stored
 4. `ck_sync_transactions` → initial full sync
 

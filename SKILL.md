@@ -7,11 +7,38 @@ description: Access Credit Karma transaction data via MCP. Use when the user ask
 
 MCP server for Credit Karma — syncs transactions into a local SQLite database and provides natural-language querying tools.
 
+- **npm:** [npmjs.com/package/creditkarma-mcp](https://www.npmjs.com/package/creditkarma-mcp)
 - **Source:** [github.com/chrischall/creditkarma-mcp](https://github.com/chrischall/creditkarma-mcp)
 
 ## Setup
 
-Add to `.mcp.json` in your project:
+### Option A — npx (recommended)
+
+Add to `.mcp.json` in your project or `~/.claude/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "creditkarma": {
+      "command": "npx",
+      "args": ["-y", "creditkarma-mcp"],
+      "env": {
+        "CK_COOKIES": "your-ckat-value-here"
+      }
+    }
+  }
+}
+```
+
+### Option B — from source
+
+```bash
+git clone https://github.com/chrischall/creditkarma-mcp
+cd creditkarma-mcp
+npm install && npm run build
+```
+
+Then add to `.mcp.json`:
 
 ```json
 {

@@ -1,0 +1,23 @@
+{
+  "name": "creditkarma-mcp",
+  "version": "1.0.5",
+  "description": "MCP server for Credit Karma — natural-language access to your transactions, spending, and accounts",
+  "author": {
+    "name": "Chris Hall",
+    "email": "chris.c.hall@gmail.com"
+  },
+  "homepage": "https://github.com/chrischall/creditkarma-mcp",
+  "repository": "https://github.com/chrischall/creditkarma-mcp",
+  "license": "MIT",
+  "keywords": ["credit-karma", "finance", "transactions", "mcp", "spending"],
+  "skills": "./SKILL.md",
+  "mcpServers": {
+    "creditkarma": {
+      "command": "npx",
+      "args": ["creditkarma-mcp"],
+      "env": {
+        "CK_COOKIES": "${CK_COOKIES}"
+      }
+    }
+  }
+}

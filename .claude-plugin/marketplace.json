@@ -12,11 +12,8 @@
   "plugins": [
     {
       "name": "creditkarma-mcp",
-      "source": {
-        "source": "npm",
-        "package": "creditkarma-mcp",
-        "version": "1.1.0"
-      },
+      "displayName": "Credit Karma",
+      "source": "./",
       "description": "MCP server for Credit Karma — sync and query your transactions, spending, and accounts via natural language",
       "version": "1.1.0",
       "author": {
@@ -26,16 +23,7 @@
       "repository": "https://github.com/chrischall/creditkarma-mcp",
       "license": "MIT",
       "keywords": ["credit-karma", "finance", "transactions", "mcp", "spending"],
-      "category": "finance",
-      "mcpServers": {
-        "creditkarma": {
-          "command": "npx",
-          "args": ["creditkarma-mcp"],
-          "env": {
-            "CK_COOKIES": "${CK_COOKIES}"
-          }
-        }
-      }
+      "category": "finance"
     }
   ]
 }

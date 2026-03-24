@@ -1,0 +1,47 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/dxt/main/dist/mcpb-manifest.schema.json",
+  "manifest_version": "0.3",
+  "name": "creditkarma-mcp",
+  "display_name": "Credit Karma",
+  "version": "1.1.0",
+  "description": "Credit Karma transaction tracking for Claude — sync and query your transactions, spending by category and merchant, and account summaries via natural language",
+  "author": {
+    "name": "Chris Chall",
+    "email": "chris.c.hall@gmail.com",
+    "url": "https://github.com/chrischall"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chrischall/creditkarma-mcp"
+  },
+  "homepage": "https://github.com/chrischall/creditkarma-mcp",
+  "support": "https://github.com/chrischall/creditkarma-mcp/issues",
+  "license": "MIT",
+  "keywords": ["creditkarma", "transactions", "finance", "spending", "accounts"],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/bundle.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/bundle.js"],
+      "env": {
+        "CK_COOKIES": "${user_config.ck_cookies}"
+      }
+    }
+  },
+  "user_config": {
+    "ck_cookies": {
+      "type": "string",
+      "title": "Credit Karma CKAT Cookie",
+      "description": "Your Credit Karma CKAT cookie value (from creditkarma.com → DevTools → Application → Cookies → CKAT)",
+      "required": false,
+      "sensitive": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=22.5.0"
+    }
+  }
+}

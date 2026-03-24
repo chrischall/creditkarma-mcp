@@ -3,3 +3,5 @@ dist/
 .env
 *.db
 coverage/
+*.skill
+*.mcpb

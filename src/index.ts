@@ -1,4 +1,3 @@
-import { config as loadDotenv } from 'dotenv'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
@@ -6,11 +5,14 @@ import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
-// Load .env from the project root (parent of dist/), regardless of cwd.
-// This works for both Claude Code and Claude Desktop.
-// Does not override vars already set in the environment (e.g. via .mcp.json or claude_desktop_config.json).
-const __dirname = dirname(fileURLToPath(import.meta.url))
-loadDotenv({ path: join(__dirname, '..', '.env'), override: false, quiet: true })
+// Load .env for local dev; silently skip if dotenv is unavailable (e.g. mcpb bundle)
+try {
+  const { config } = await import('dotenv')
+  const __dirname = dirname(fileURLToPath(import.meta.url))
+  config({ path: join(__dirname, '..', '.env'), override: false })
+} catch {
+  // not available — rely on process.env (mcpb sets credentials via mcp_config.env)
+}
 
 import { CreditKarmaClient } from './client.js'
 import { initDb } from './db.js'

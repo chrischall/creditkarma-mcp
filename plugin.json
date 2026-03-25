@@ -1,0 +1,7 @@
+{
+  "name": "creditkarma-mcp",
+  "displayName": "Credit Karma",
+  "version": "1.2.0",
+  "description": "Credit Karma transaction tracking for Claude",
+  "type": "mcp"
+}

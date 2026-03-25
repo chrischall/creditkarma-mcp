@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "creditkarma-mcp",
   "display_name": "Credit Karma",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Credit Karma transaction tracking for Claude — sync and query your transactions, spending by category and merchant, and account summaries via natural language",
   "author": {
     "name": "Chris Chall",
@@ -38,6 +38,16 @@
       "sensitive": true
     }
   },
+  "tools": [
+    { "name": "ck_set_session", "description": "Store a Credit Karma session cookie to enable automatic token refresh" },
+    { "name": "ck_sync_transactions", "description": "Sync Credit Karma transactions into the local SQLite database" },
+    { "name": "ck_list_transactions", "description": "List transactions with optional filters. Paginated." },
+    { "name": "ck_get_recent_transactions", "description": "Return the N most recent transactions" },
+    { "name": "ck_get_spending_by_category", "description": "Group debit transactions by category and return totals" },
+    { "name": "ck_get_spending_by_merchant", "description": "Return top merchants by total debit spend" },
+    { "name": "ck_get_account_summary", "description": "Return per-account debit, credit, and net totals" },
+    { "name": "ck_query_sql", "description": "Execute a raw SQL SELECT query against the transactions database" }
+  ],
   "compatibility": {
     "platforms": ["darwin", "win32", "linux"],
     "runtimes": {

@@ -4,16 +4,6 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-
-// Load .env for local dev; silently skip if dotenv is unavailable (e.g. mcpb bundle)
-try {
-  const { config } = await import('dotenv')
-  const __dirname = dirname(fileURLToPath(import.meta.url))
-  config({ path: join(__dirname, '..', '.env'), override: false })
-} catch {
-  // not available — rely on process.env (mcpb sets credentials via mcp_config.env)
-}
-
 import { CreditKarmaClient } from './client.js'
 import { initDb } from './db.js'
 import type { Database } from './db.js'
@@ -26,6 +16,16 @@ import {
   handleGetSpendingByCategory, handleGetSpendingByMerchant, handleGetAccountSummary
 } from './tools/query.js'
 import { sqlToolDefinitions, handleQuerySql } from './tools/sql.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+// Load .env for local dev; silently skip if dotenv is unavailable (e.g. mcpb bundle)
+try {
+  const { config } = await import('dotenv')
+  config({ path: join(__dirname, '..', '.env'), override: false })
+} catch {
+  // not available — rely on process.env (mcpb sets credentials via mcp_config.env)
+}
 
 export interface AppContext {
   client: CreditKarmaClient
@@ -68,7 +68,7 @@ async function main() {
   }
 
   const server = new Server(
-    { name: 'creditkarma-mcp', version: '1.1.0' },
+    { name: 'creditkarma-mcp', version: '1.2.0' },
     { capabilities: { tools: {} } }
   )
 

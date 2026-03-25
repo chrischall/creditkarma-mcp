@@ -1,7 +1,7 @@
 {
   "name": "creditkarma-mcp",
   "displayName": "Credit Karma",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "MCP server for Credit Karma — natural-language access to your transactions, spending, and accounts",
   "author": {
     "name": "Chris Hall",

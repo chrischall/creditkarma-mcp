@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "creditkarma-mcp",
   "display_name": "Credit Karma",
-  "version": "1.2.1",
+  "version": "2.0.0",
   "description": "Credit Karma transaction tracking for Claude — sync and query your transactions, spending by category and merchant, and account summaries via natural language",
   "author": {
     "name": "Chris Chall",

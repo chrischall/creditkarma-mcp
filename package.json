@@ -1,11 +1,11 @@
 {
   "name": "creditkarma-mcp",
-  "version": "1.2.1",
+  "version": "2.0.0",
   "description": "MCP server for Credit Karma — natural-language access to your transactions, spending, and accounts",
   "author": "Claude Sonnet 4.6 (AI) <https://www.anthropic.com/claude>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/chrischall/creditkarma-mcp"
+    "url": "git+https://github.com/chrischall/creditkarma-mcp.git"
   },
   "type": "module",
   "bin": {
@@ -25,14 +25,14 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
-    "dotenv": "^17.3.1"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^17.4.0"
   },
   "devDependencies": {
-    "@types/node": "^24.12.0",
-    "@vitest/coverage-v8": "^4.1.0",
+    "@types/node": "^25.5.2",
+    "@vitest/coverage-v8": "^4.1.2",
     "esbuild": "^0.25.0",
-    "typescript": "^5.8.0",
-    "vitest": "^4.1.0"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
   }
 }

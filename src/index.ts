@@ -68,7 +68,7 @@ async function main() {
   }
 
   const server = new Server(
-    { name: 'creditkarma-mcp', version: '1.2.1' },
+    { name: 'creditkarma-mcp', version: '2.0.0' },
     { capabilities: { tools: {} } }
   )
 

@@ -1,3 +1,5 @@
+import { z } from 'zod'
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AppContext } from '../index.js'
 import type { Database } from '../db.js'
 
@@ -235,78 +237,97 @@ export async function handleGetAccountSummary(
 }
 
 // ---------------------------------------------------------------------------
-// Tool definitions for all 5 query tools
+// Registration
 // ---------------------------------------------------------------------------
 
-export const queryToolDefinitions = [
-  {
-    name: 'ck_list_transactions',
-    description: 'List transactions with optional filters. Paginated.',
-    annotations: { readOnlyHint: true },
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        start_date: { type: 'string', description: 'YYYY-MM-DD' },
-        end_date: { type: 'string', description: 'YYYY-MM-DD' },
-        account: { type: 'string', description: 'Partial account name match' },
-        category: { type: 'string', description: 'Partial category name match' },
-        merchant: { type: 'string', description: 'Partial merchant name match' },
-        status: { type: 'string', description: 'e.g. posted, pending, cancelled' },
-        min_amount: { type: 'number', description: 'Minimum absolute amount' },
-        max_amount: { type: 'number', description: 'Maximum absolute amount' },
-        limit: { type: 'number', description: 'Default 50' },
-        offset: { type: 'number', description: 'Default 0' }
-      }
+export function registerQueryTools(server: McpServer, ctx: AppContext): void {
+  server.registerTool(
+    'ck_list_transactions',
+    {
+      description: 'List transactions with optional filters. Paginated.',
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        start_date: z.string().optional().describe('YYYY-MM-DD'),
+        end_date: z.string().optional().describe('YYYY-MM-DD'),
+        account: z.string().optional().describe('Partial account name match'),
+        category: z.string().optional().describe('Partial category name match'),
+        merchant: z.string().optional().describe('Partial merchant name match'),
+        status: z.string().optional().describe('e.g. posted, pending, cancelled'),
+        min_amount: z.number().optional().describe('Minimum absolute amount'),
+        max_amount: z.number().optional().describe('Maximum absolute amount'),
+        limit: z.number().optional().describe('Default 50'),
+        offset: z.number().optional().describe('Default 0'),
+      },
+    },
+    async (args) => {
+      const result = await handleListTransactions(args, ctx)
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
     }
-  },
-  {
-    name: 'ck_get_recent_transactions',
-    description: 'Return the N most recent transactions. Convenience shortcut for ck_list_transactions.',
-    annotations: { readOnlyHint: true },
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        limit: { type: 'number', description: 'Number of transactions to return (default 25)' }
-      }
+  )
+
+  server.registerTool(
+    'ck_get_recent_transactions',
+    {
+      description: 'Return the N most recent transactions. Convenience shortcut for ck_list_transactions.',
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        limit: z.number().optional().describe('Number of transactions to return (default 25)'),
+      },
+    },
+    async (args) => {
+      const result = await handleGetRecentTransactions(args, ctx)
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
     }
-  },
-  {
-    name: 'ck_get_spending_by_category',
-    description: 'Group debit transactions by category and return totals.',
-    annotations: { readOnlyHint: true },
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        start_date: { type: 'string', description: 'YYYY-MM-DD' },
-        end_date: { type: 'string', description: 'YYYY-MM-DD' },
-        account: { type: 'string', description: 'Partial account name filter' }
-      }
+  )
+
+  server.registerTool(
+    'ck_get_spending_by_category',
+    {
+      description: 'Group debit transactions by category and return totals.',
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        start_date: z.string().optional().describe('YYYY-MM-DD'),
+        end_date: z.string().optional().describe('YYYY-MM-DD'),
+        account: z.string().optional().describe('Partial account name filter'),
+      },
+    },
+    async (args) => {
+      const result = await handleGetSpendingByCategory(args, ctx)
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
     }
-  },
-  {
-    name: 'ck_get_spending_by_merchant',
-    description: 'Return top merchants by total debit spend.',
-    annotations: { readOnlyHint: true },
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        start_date: { type: 'string', description: 'YYYY-MM-DD' },
-        end_date: { type: 'string', description: 'YYYY-MM-DD' },
-        category: { type: 'string', description: 'Partial category name filter' },
-        limit: { type: 'number', description: 'Default 25' }
-      }
+  )
+
+  server.registerTool(
+    'ck_get_spending_by_merchant',
+    {
+      description: 'Return top merchants by total debit spend.',
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        start_date: z.string().optional().describe('YYYY-MM-DD'),
+        end_date: z.string().optional().describe('YYYY-MM-DD'),
+        category: z.string().optional().describe('Partial category name filter'),
+        limit: z.number().optional().describe('Default 25'),
+      },
+    },
+    async (args) => {
+      const result = await handleGetSpendingByMerchant(args, ctx)
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
     }
-  },
-  {
-    name: 'ck_get_account_summary',
-    description: 'Return per-account debit, credit, and net totals.',
-    annotations: { readOnlyHint: true },
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        start_date: { type: 'string', description: 'YYYY-MM-DD' },
-        end_date: { type: 'string', description: 'YYYY-MM-DD' }
-      }
+  )
+
+  server.registerTool(
+    'ck_get_account_summary',
+    {
+      description: 'Return per-account debit, credit, and net totals.',
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        start_date: z.string().optional().describe('YYYY-MM-DD'),
+        end_date: z.string().optional().describe('YYYY-MM-DD'),
+      },
+    },
+    async (args) => {
+      const result = await handleGetAccountSummary(args, ctx)
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
     }
-  }
-]
+  )
+}

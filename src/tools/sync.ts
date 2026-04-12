@@ -1,3 +1,5 @@
+import { z } from 'zod'
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AppContext } from '../index.js'
 import {
   upsertAccount, upsertCategory, upsertMerchant, upsertTransaction,
@@ -131,23 +133,23 @@ function utcDateString(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-
-export const syncToolDefinitions = [
-  {
-    name: 'ck_sync_transactions',
-    description:
-      'Sync Credit Karma transactions into the local SQLite database. ' +
-      'Incremental by default (fetches since last sync + 30-day overlap for updates). ' +
-      'If no valid token, initiates the login/MFA flow automatically.',
-    annotations: { readOnlyHint: false },
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        force_full: {
-          type: 'boolean',
-          description: 'If true, re-fetch all transactions from the beginning'
-        }
-      }
+export function registerSyncTools(server: McpServer, ctx: AppContext): void {
+  server.registerTool(
+    'ck_sync_transactions',
+    {
+      description:
+        'Sync Credit Karma transactions into the local SQLite database. ' +
+        'Incremental by default (fetches since last sync + 30-day overlap for updates). ' +
+        'If no valid token, initiates the login/MFA flow automatically.',
+      annotations: { readOnlyHint: false },
+      inputSchema: {
+        force_full: z.boolean().optional().describe('If true, re-fetch all transactions from the beginning'),
+      },
+    },
+    async (args) => {
+      const result = await handleSyncTransactions(args, ctx)
+      const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+      return { content: [{ type: 'text', text }] }
     }
-  }
-]
+  )
+}

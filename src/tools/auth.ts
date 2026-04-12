@@ -1,5 +1,7 @@
+import { z } from 'zod'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join, dirname } from 'path'
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AppContext } from '../index.js'
 
 export interface SetSessionArgs {
@@ -71,17 +73,19 @@ export function persistSession(
 // Keep old name as alias for tests
 export const persistTokens = persistSession
 
-export const authToolDefinitions = [
-  {
-    name: 'ck_set_session',
-    description: 'Store a Credit Karma session to enable automatic token refresh. Accepts any of: (1) the raw CKAT cookie value, (2) the full Cookie header string from any creditkarma.com request, or (3) just "CKAT=<value>". Find CKAT in Chrome DevTools → Application → Cookies → creditkarma.com, or copy the Cookie request header from the Network tab.',
-    annotations: { readOnlyHint: false },
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        cookies: { type: 'string', description: 'One of: raw CKAT value, full Cookie header string, or "CKAT=<value>"' },
+export function registerAuthTools(server: McpServer, ctx: AppContext): void {
+  server.registerTool(
+    'ck_set_session',
+    {
+      description: 'Store a Credit Karma session to enable automatic token refresh. Accepts any of: (1) the raw CKAT cookie value, (2) the full Cookie header string from any creditkarma.com request, or (3) just "CKAT=<value>". Find CKAT in Chrome DevTools \u2192 Application \u2192 Cookies \u2192 creditkarma.com, or copy the Cookie request header from the Network tab.',
+      annotations: { readOnlyHint: false },
+      inputSchema: {
+        cookies: z.string().describe('One of: raw CKAT value, full Cookie header string, or "CKAT=<value>"'),
       },
-      required: ['cookies']
+    },
+    async (args) => {
+      const result = await handleSetSession(args, ctx)
+      return { content: [{ type: 'text', text: result }] }
     }
-  }
-]
+  )
+}

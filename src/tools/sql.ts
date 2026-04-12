@@ -1,3 +1,5 @@
+import { z } from 'zod'
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AppContext } from '../index.js'
 
 export interface QuerySqlArgs {
@@ -20,20 +22,22 @@ export async function handleQuerySql(args: QuerySqlArgs, ctx: AppContext): Promi
   return { rows, count: rows.length }
 }
 
-export const sqlToolDefinitions = [
-  {
-    name: 'ck_query_sql',
-    description:
-      'Execute a raw SQL SELECT query against the transactions database. ' +
-      'Non-SELECT statements (INSERT, UPDATE, DELETE, DROP, etc.) are rejected. ' +
-      'Tables: transactions, accounts, categories, merchants, sync_state.',
-    annotations: { readOnlyHint: true },
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        sql: { type: 'string', description: 'A SELECT SQL statement' }
+export function registerSqlTools(server: McpServer, ctx: AppContext): void {
+  server.registerTool(
+    'ck_query_sql',
+    {
+      description:
+        'Execute a raw SQL SELECT query against the transactions database. ' +
+        'Non-SELECT statements (INSERT, UPDATE, DELETE, DROP, etc.) are rejected. ' +
+        'Tables: transactions, accounts, categories, merchants, sync_state.',
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        sql: z.string().describe('A SELECT SQL statement'),
       },
-      required: ['sql']
+    },
+    async (args) => {
+      const result = await handleQuerySql(args, ctx)
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
     }
-  }
-]
+  )
+}

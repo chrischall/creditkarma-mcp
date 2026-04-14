@@ -113,7 +113,7 @@ export async function handleSyncTransactions(
 
 async function refreshOrThrow(ctx: AppContext): Promise<void> {
   if (!ctx.client.getRefreshToken()) {
-    throw new Error('TOKEN_EXPIRED: No valid token. Call ck_set_session with your CKAT cookie to authenticate.')
+    throw new Error('TOKEN_EXPIRED: No valid token. Run `npm run auth` to capture a fresh Cookie header via browser login, or call ck_set_session with your CKAT cookie.')
   }
   await ctx.client.refreshAccessToken()
 }

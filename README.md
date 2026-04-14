@@ -3,7 +3,7 @@
 A [Model Context Protocol](https://modelcontextprotocol.io) server that connects Claude to [Credit Karma](https://www.creditkarma.com), giving you natural-language access to your transactions, spending patterns, and account summaries.
 
 > [!WARNING]
-> **AI-developed project.** This codebase was entirely built and is actively maintained by [Claude Sonnet 4.6](https://www.anthropic.com/claude). No human has audited the implementation. Review all code and tool permissions before use.
+> **AI-developed project.** This codebase was entirely built and is actively maintained by [Claude Code](https://www.anthropic.com/claude). No human has audited the implementation. Review all code and tool permissions before use.
 
 ## What you can do
 
@@ -21,6 +21,7 @@ Ask Claude things like:
 - [Claude Desktop](https://claude.ai/download) or [Claude Code](https://claude.ai/code)
 - [Node.js](https://nodejs.org) 18 or later
 - A Credit Karma account
+- [Google Chrome](https://www.google.com/chrome/) — used once for the scripted auth flow (optional; you can copy the cookie manually instead)
 
 ## Installation
 
@@ -81,21 +82,33 @@ Credit Karma uses short-lived JWTs. This server handles automatic token refresh 
 
 ### Getting your credentials
 
+#### Option A — scripted (recommended)
+
+```bash
+npm run auth               # prints the Cookie header to the console
+npm run auth -- .env       # writes CK_COOKIES=<header> to .env
+```
+
+Launches Chrome with a dedicated profile at `~/.creditkarma-mcp/chrome-profile`, waits for you to sign in at creditkarma.com, then captures the full Cookie header (including the `CKAT` cookie that holds the access + refresh JWTs). Either prints it (for pasting into Claude Desktop / MCPB) or writes it to the env file you pass. Requires Google Chrome installed locally; the script installs `puppeteer-core` on first run (~1 MB).
+
+#### Option B — manual (DevTools)
+
 1. Log in to [creditkarma.com](https://www.creditkarma.com) in Chrome
 2. Open DevTools → **Application** → **Cookies** → `https://www.creditkarma.com`
 3. Find the `CKAT` cookie and copy its value
 
 ### Setting credentials
 
-Call `ck_set_session` with your cookie value — it accepts any of:
+Either of these works:
+
+- Paste the value from `npm run auth` (or your CKAT cookie) into `CK_COOKIES` in your `.env` or Claude config
+- Or call `ck_set_session` from within Claude with the cookie value — it accepts any of:
 
 | Format | Example |
 |--------|---------|
 | Raw CKAT value | `eyJraWQ...%3BeyJraWQ...` |
 | `CKAT=<value>` | `CKAT=eyJraWQ...%3BeyJraWQ...` |
-| Full Cookie header | *(paste the entire Cookie header from DevTools → Network)* |
-
-Or set `CK_COOKIES` directly in your `.env` file (any of the three formats above).
+| Full Cookie header | *(what `npm run auth` prints)* |
 
 The server automatically extracts both the access token and refresh token from the CKAT cookie, and refreshes the access token as needed.
 
@@ -103,7 +116,7 @@ The server automatically extracts both the access token and refresh token from t
 
 - **Access token**: ~15 minutes (auto-refreshed transparently)
 - **Refresh token**: ~8 hours
-- When the refresh token expires, log in to creditkarma.com again, grab the new CKAT cookie, and call `ck_set_session`
+- When the refresh token expires, re-run `npm run auth` (or grab the new CKAT cookie from DevTools) and either update `CK_COOKIES` or call `ck_set_session`
 
 ## Available tools
 
@@ -145,7 +158,7 @@ sync_state   (key, value)
 
 ## Troubleshooting
 
-**"TOKEN_EXPIRED"** — your refresh token has expired. Log in to creditkarma.com, grab the new CKAT cookie, and call `ck_set_session`.
+**"TOKEN_EXPIRED"** — your refresh token has expired. Re-run `npm run auth` (or grab a new CKAT cookie) and update `CK_COOKIES` or call `ck_set_session`.
 
 **Sync returns 0 transactions** — check that your `CK_COOKIES` value is fresh. CKAT cookies expire after ~8 hours.
 

@@ -58,6 +58,15 @@ Or use a `.env` file in the project directory with `CK_COOKIES=<value>`.
 
 ### Getting CK_COOKIES
 
+**Scripted (recommended — source install):**
+```bash
+npm run auth               # prints the Cookie header to the console
+npm run auth -- .env       # writes CK_COOKIES=<header> to .env
+```
+
+Launches Chrome with a dedicated profile, waits for sign-in at creditkarma.com, then captures the full Cookie header. Use the printed value with Claude Desktop / MCPB, or the `.env` form when running from source.
+
+**Manual (DevTools):**
 1. Log in to [creditkarma.com](https://www.creditkarma.com) in Chrome
 2. DevTools → **Application** → **Cookies** → `creditkarma.com`
 3. Copy the `CKAT` cookie value
@@ -70,7 +79,7 @@ Call `ck_set_session` with your cookie value to store credentials and enable aut
 
 - Access token: ~15 min TTL, auto-refreshed transparently
 - Refresh token: ~8 hours TTL
-- When expired: log in to creditkarma.com, grab the new CKAT cookie, call `ck_set_session`
+- When expired: re-run `npm run auth` (or grab a new CKAT cookie) and call `ck_set_session`
 
 ## Tools
 
@@ -97,10 +106,9 @@ Call `ck_set_session` with your cookie value to store credentials and enable aut
 ## Workflows
 
 **First-time setup:**
-1. Log in to [creditkarma.com](https://www.creditkarma.com) in Chrome
-2. DevTools → Application → Cookies → copy the `CKAT` value
-3. `ck_set_session(cookies)` → credentials stored
-4. `ck_sync_transactions` → initial full sync
+1. Run `npm run auth` (or grab the `CKAT` cookie manually from creditkarma.com DevTools)
+2. Paste into `CK_COOKIES` env var, or call `ck_set_session(cookies)` from within Claude
+3. `ck_sync_transactions` → initial full sync
 
 **Regular use:**
 - `ck_sync_transactions` → pull latest transactions

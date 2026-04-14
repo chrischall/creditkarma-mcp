@@ -42,7 +42,7 @@ Each tool file exports tool definitions (MCP schemas) and a handler. `index.ts` 
 ## Environment
 
 ```
-CK_COOKIES=<value>    # CKAT cookie value, CKAT=<value>, or full Cookie header. Optional — can use ck_set_session instead.
+CK_COOKIES=<value>    # CKAT cookie value, CKAT=<value>, or full Cookie header. Run `npm run auth -- .env` to capture via browser login, or use `ck_set_session` at runtime.
 CK_DB_PATH=<path>     # Path to SQLite database. Default: ~/.creditkarma-mcp/transactions.db
 ```
 

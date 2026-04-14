@@ -41,7 +41,7 @@
     "ck_cookies": {
       "type": "string",
       "title": "Credit Karma CKAT Cookie",
-      "description": "Your Credit Karma CKAT cookie value (from creditkarma.com → DevTools → Application → Cookies → CKAT)",
+      "description": "Your Credit Karma Cookie header (run `npm run auth` from the repo to capture via browser login, or copy CKAT from DevTools → Application → Cookies)",
       "required": false,
       "sensitive": true
     }

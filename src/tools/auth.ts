@@ -77,7 +77,7 @@ export function registerAuthTools(server: McpServer, ctx: AppContext): void {
   server.registerTool(
     'ck_set_session',
     {
-      description: 'Store a Credit Karma session to enable automatic token refresh. Accepts any of: (1) the raw CKAT cookie value, (2) the full Cookie header string from any creditkarma.com request, or (3) just "CKAT=<value>". Find CKAT in Chrome DevTools \u2192 Application \u2192 Cookies \u2192 creditkarma.com, or copy the Cookie request header from the Network tab.',
+      description: 'Store a Credit Karma session to enable automatic token refresh. Accepts any of: (1) the raw CKAT cookie value, (2) the full Cookie header string from any creditkarma.com request, or (3) just "CKAT=<value>". Capture via `npm run auth` from the creditkarma-mcp repo, or find CKAT in Chrome DevTools \u2192 Application \u2192 Cookies \u2192 creditkarma.com.',
       annotations: { readOnlyHint: false },
       inputSchema: {
         cookies: z.string().describe('One of: raw CKAT value, full Cookie header string, or "CKAT=<value>"'),

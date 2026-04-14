@@ -2,11 +2,26 @@
   "name": "creditkarma-mcp",
   "version": "2.0.2",
   "description": "MCP server for Credit Karma — natural-language access to your transactions, spending, and accounts",
-  "author": "Claude Sonnet 4.6 (AI) <https://www.anthropic.com/claude>",
+  "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/chrischall/creditkarma-mcp.git"
   },
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "ai",
+    "credit-karma",
+    "transactions",
+    "spending",
+    "accounts",
+    "budgeting",
+    "personal-finance",
+    "sqlite",
+    "graphql"
+  ],
   "type": "module",
   "bin": {
     "creditkarma-mcp": "dist/index.js"
@@ -20,6 +35,7 @@
     "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --external:dotenv --outfile=dist/bundle.js",
     "start": "node dist/index.js",
     "dev": "node --env-file=.env dist/index.js",
+    "auth": "node scripts/setup-auth.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
@@ -33,6 +49,7 @@
     "@types/node": "^25.5.2",
     "@vitest/coverage-v8": "^4.1.2",
     "esbuild": "^0.28.0",
+    "puppeteer-core": "^24.0.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.2"
   }

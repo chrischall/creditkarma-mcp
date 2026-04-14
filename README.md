@@ -85,11 +85,11 @@ Credit Karma uses short-lived JWTs. This server handles automatic token refresh 
 #### Option A — scripted (recommended)
 
 ```bash
-npm run auth               # prints the Cookie header to the console
-npm run auth -- .env       # writes CK_COOKIES=<header> to .env
+npm run auth               # prints the CKAT value to the console
+npm run auth -- .env       # writes CK_COOKIES=<ckat> to .env
 ```
 
-Launches Chrome with a dedicated profile at `~/.creditkarma-mcp/chrome-profile`, waits for you to sign in at creditkarma.com, then captures the full Cookie header (including the `CKAT` cookie that holds the access + refresh JWTs). Either prints it (for pasting into Claude Desktop / MCPB) or writes it to the env file you pass. Requires Google Chrome installed locally; the script installs `puppeteer-core` on first run (~1 MB).
+Launches Chrome with a dedicated profile at `~/.creditkarma-mcp/chrome-profile`, waits for you to sign in at creditkarma.com, then captures the `CKAT` cookie (the URL-encoded bundle of access + refresh JWTs). Either prints it (for pasting into Claude Desktop / MCPB) or writes it to the env file you pass. Requires Google Chrome installed locally; the script installs `puppeteer-core` on first run (~1 MB).
 
 #### Option B — manual (DevTools)
 

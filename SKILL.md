@@ -60,11 +60,11 @@ Or use a `.env` file in the project directory with `CK_COOKIES=<value>`.
 
 **Scripted (recommended — source install):**
 ```bash
-npm run auth               # prints the Cookie header to the console
-npm run auth -- .env       # writes CK_COOKIES=<header> to .env
+npm run auth               # prints the CKAT value to the console
+npm run auth -- .env       # writes CK_COOKIES=<ckat> to .env
 ```
 
-Launches Chrome with a dedicated profile, waits for sign-in at creditkarma.com, then captures the full Cookie header. Use the printed value with Claude Desktop / MCPB, or the `.env` form when running from source.
+Launches Chrome with a dedicated profile, waits for sign-in at creditkarma.com, then captures the `CKAT` cookie (the URL-encoded bundle of access + refresh JWTs). Use the printed value with Claude Desktop / MCPB, or the `.env` form when running from source.
 
 **Manual (DevTools):**
 1. Log in to [creditkarma.com](https://www.creditkarma.com) in Chrome

@@ -1,6 +1,6 @@
 {
   "name": "creditkarma-mcp",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "MCP server for Credit Karma — natural-language access to your transactions, spending, and accounts",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
   "repository": {

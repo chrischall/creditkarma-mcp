@@ -1,0 +1,29 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.chrischall/creditkarma-mcp",
+  "description": "Credit Karma transaction tracking for Claude \u2014 sync and query your transactions, spending by category and merchant, and account summaries via natural language",
+  "repository": {
+    "url": "https://github.com/chrischall/creditkarma-mcp",
+    "source": "github"
+  },
+  "version": "2.0.4",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "creditkarma-mcp",
+      "version": "2.0.4",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "CK_COOKIES",
+          "description": "Your Credit Karma Cookie header (run `npm run auth` to capture via browser login, or copy CKAT from DevTools)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

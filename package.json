@@ -1,6 +1,7 @@
 {
   "name": "creditkarma-mcp",
   "version": "2.0.4",
+  "mcpName": "io.github.chrischall/creditkarma-mcp",
   "description": "MCP server for Credit Karma — natural-language access to your transactions, spending, and accounts",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
   "repository": {
@@ -28,7 +29,8 @@
   },
   "files": [
     "dist",
-    "SKILL.md"
+    "SKILL.md",
+    "server.json"
   ],
   "scripts": {
     "build": "tsc && cp src/transaction.graphql dist/ && npm run bundle",

@@ -17,7 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // Load .env for local dev; silently skip if dotenv is unavailable (e.g. mcpb bundle)
 try {
   const { config } = await import('dotenv')
-  config({ path: join(__dirname, '..', '.env'), override: false })
+  config({ path: join(__dirname, '..', '.env'), override: false, quiet: true })
 } catch {
   // not available — rely on process.env (mcpb sets credentials via mcp_config.env)
 }

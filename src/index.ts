@@ -12,6 +12,20 @@ import { registerSyncTools } from './tools/sync.js'
 import { registerQueryTools } from './tools/query.js'
 import { registerSqlTools } from './tools/sql.js'
 
+/**
+ * Read an env var, trim whitespace, and treat as unset if blank or if the value
+ * looks like an unsubstituted shell placeholder (e.g. `${FOO}`) — defends
+ * against MCP hosts that pass .mcp.json env blocks through unexpanded.
+ */
+function readVar(key: string): string | undefined {
+  const raw = process.env[key];
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return undefined;
+  if (/^\$\{[^}]*\}$/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // Load .env for local dev; silently skip if dotenv is unavailable (e.g. mcpb bundle)
@@ -34,10 +48,10 @@ function extractCookieValue(cookieString: string, name: string): string | undefi
 }
 
 async function main() {
-  const dbPath = process.env.CK_DB_PATH || join(homedir(), '.creditkarma-mcp', 'transactions.db')
+  const dbPath = readVar('CK_DB_PATH') || join(homedir(), '.creditkarma-mcp', 'transactions.db')
   const mcpJsonPath = join(__dirname, '..', '.mcp.json')
 
-  const cookies = process.env.CK_COOKIES || undefined
+  const cookies = readVar('CK_COOKIES') || undefined
 
   // Bootstrap tokens from CK_COOKIES: accepts raw CKAT, CKAT=<value>, or full cookie string
   let token: string | undefined

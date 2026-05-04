@@ -7,7 +7,7 @@
   },
   "metadata": {
     "description": "MCP server for Credit Karma — natural-language access to your transactions, spending, and accounts",
-    "version": "1.1.0"
+    "version": "2.0.5"
   },
   "plugins": [
     {
@@ -15,14 +15,20 @@
       "displayName": "Credit Karma",
       "source": "./",
       "description": "MCP server for Credit Karma — sync and query your transactions, spending, and accounts via natural language",
-      "version": "1.1.0",
+      "version": "2.0.5",
       "author": {
         "name": "Chris Hall"
       },
       "homepage": "https://github.com/chrischall/creditkarma-mcp",
       "repository": "https://github.com/chrischall/creditkarma-mcp",
       "license": "MIT",
-      "keywords": ["credit-karma", "finance", "transactions", "mcp", "spending"],
+      "keywords": [
+        "credit-karma",
+        "finance",
+        "transactions",
+        "mcp",
+        "spending"
+      ],
       "category": "finance"
     }
   ]

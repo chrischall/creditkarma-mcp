@@ -188,6 +188,10 @@ npm run test:coverage  # coverage report (CI enforces 100% on src/**)
 
 Versions are bumped automatically by the **Tag & Bump** GitHub Action (`.github/workflows/tag-and-bump.yml`). Do not bump manually.
 
+### Pull requests
+
+Changes land via PR, including for solo work — release notes are generated from merged PRs only (config in `.github/release.yml`). Apply one of these labels to every PR: `enhancement`, `bug`, `security`, `refactor`, `documentation`, `test`, `dependencies`, `ci`, or `ignore-for-release` (excludes from notes). The PR title becomes the changelog bullet, so write it like a user-facing entry.
+
 ### Project structure
 
 ```

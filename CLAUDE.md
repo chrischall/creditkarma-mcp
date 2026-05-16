@@ -59,6 +59,29 @@ Tests live in `tests/`. Run with `npm test`. No real API calls — client is moc
 SKILL.md            # Claude Code skill — teaches Claude when/how to use the tools
 ```
 
+## Pull requests & release notes
+
+**Default workflow: branch + PR, even for solo work.** Direct pushes to `main` skip review *and* skip auto-generated release notes — GitHub's `generate_release_notes` (configured in `.github/release.yml`) only picks up merged PRs. Push directly to `main` only when the user explicitly asks for it (e.g. emergency hotfix).
+
+For every PR, apply exactly one label so it lands in the right release-notes section:
+
+| Label                | Section in release notes |
+|----------------------|--------------------------|
+| `enhancement`        | Features                 |
+| `bug`                | Bug Fixes                |
+| `security`           | Security                 |
+| `refactor`           | Refactor                 |
+| `documentation`      | Documentation            |
+| `test`               | Tests                    |
+| `dependencies`       | Dependencies             |
+| `ci` / `github_actions` | CI & Build            |
+| *(none / unmatched)* | Other Changes            |
+| `ignore-for-release` | Hidden from notes        |
+
+The **PR title** becomes the bullet — write it like a user-facing changelog entry (`ck_set_session: refuse stale refresh tokens`), not internal shorthand (`auth tweaks`). Conventional-commit prefixes (`feat:`, `fix:`, `chore:`) are still fine in commit messages, but the PR title should read clean.
+
+Use `gh pr create --label <label>` (or `--label ignore-for-release` for chores not worth a line). Squash-merge is preferred so each PR maps to one commit in history.
+
 ## Versioning
 
 Version appears in SEVEN places — all must match:

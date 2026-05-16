@@ -91,7 +91,16 @@ npm run auth -- .env       # writes CK_COOKIES=<ckat> to .env
 
 Launches Chrome with a dedicated profile at `~/.creditkarma-mcp/chrome-profile`, waits for you to sign in at creditkarma.com, then captures the `CKAT` cookie (the URL-encoded bundle of access + refresh JWTs). Either prints it (for pasting into Claude Desktop / MCPB) or writes it to the env file you pass. Requires Google Chrome installed locally; the script installs `puppeteer-core` on first run (~1 MB).
 
-#### Option B — manual (DevTools)
+#### Option B — manual paste (secure prompt)
+
+```bash
+npm run auth -- --manual           # prompts for the cookie, prints CK_COOKIES
+npm run auth -- --manual .env      # prompts for the cookie, writes to .env
+```
+
+Use this if the scripted flow hits Intuit/Akamai bot detection (sign-in returns "A technical issue has unexpectedly occurred"). Grab the cookie from your normal Chrome (Option C below), then paste it at the prompt. Input is **not echoed** — paste, press Enter. Accepts the raw CKAT value, `CKAT=<value>`, or a full Cookie header.
+
+#### Option C — manual (DevTools)
 
 1. Log in to [creditkarma.com](https://www.creditkarma.com) in Chrome
 2. Open DevTools → **Application** → **Cookies** → `https://www.creditkarma.com`

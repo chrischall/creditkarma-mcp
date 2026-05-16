@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { writeEnvVar } from '../scripts/setup-auth.mjs'
+import { writeEnvVar, cleanPastedCookie } from '../scripts/setup-auth.mjs'
 
 describe('writeEnvVar', () => {
   let tmpDir: string
@@ -51,5 +51,30 @@ describe('writeEnvVar', () => {
     writeEnvVar(envPath, 'CK_COOKIES', 'bar')
     const mode = fs.statSync(envPath).mode & 0o777
     expect(mode).toBe(0o600)
+  })
+})
+
+describe('cleanPastedCookie', () => {
+  it('returns the input untouched when no markers present', () => {
+    expect(cleanPastedCookie('eyJraWQ%3BeyJraWQ')).toBe('eyJraWQ%3BeyJraWQ')
+  })
+
+  it('trims surrounding whitespace', () => {
+    expect(cleanPastedCookie('  eyJraWQ  ')).toBe('eyJraWQ')
+  })
+
+  it('strips bracketed-paste start and end markers', () => {
+    const raw = '[200~eyJraWQ%3BeyJraWQ[201~'
+    expect(cleanPastedCookie(raw)).toBe('eyJraWQ%3BeyJraWQ')
+  })
+
+  it('strips markers even with surrounding whitespace', () => {
+    const raw = '  [200~eyJraWQ[201~\n'
+    expect(cleanPastedCookie(raw)).toBe('eyJraWQ')
+  })
+
+  it('strips repeated markers (paste split across multiple chunks)', () => {
+    const raw = '[200~part1[201~[200~part2[201~'
+    expect(cleanPastedCookie(raw)).toBe('part1part2')
   })
 })

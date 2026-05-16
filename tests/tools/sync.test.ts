@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { handleSyncTransactions } from '../../src/tools/sync.js'
+import { handleSyncTransactions, registerSyncTools } from '../../src/tools/sync.js'
 import { CreditKarmaClient } from '../../src/client.js'
 import { initDb, getSyncState, setSyncState } from '../../src/db.js'
 import type { AppContext } from '../../src/index.js'
 import type { TransactionPage } from '../../src/client.js'
+import { fakeServer } from '../helpers.js'
 
 const makeTx = (id: string, date: string, overrides = {}) => ({
   id, date, description: `Tx ${id}`, status: 'posted',
@@ -155,5 +156,107 @@ describe('ck_sync_transactions', () => {
     vi.spyOn(ctx.client, 'fetchPage').mockRejectedValueOnce(new Error('TOKEN_EXPIRED'))
     await expect(handleSyncTransactions({}, ctx)).rejects.toThrow('TOKEN_EXPIRED')
     expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
+  })
+
+  it('refreshes mid-sync after TOKEN_EXPIRED and retries the page successfully', async () => {
+    ctx.client.setRefreshToken('refresh-tok')
+    const refreshSpy = vi.spyOn(ctx.client, 'refreshAccessToken').mockResolvedValueOnce('new-access')
+    const fetchSpy = vi.spyOn(ctx.client, 'fetchPage')
+      .mockRejectedValueOnce(new Error('TOKEN_EXPIRED'))
+      .mockResolvedValueOnce(makePage([makeTx('tx-after-refresh', '2024-02-10')]))
+
+    const result = await handleSyncTransactions({}, ctx) as { total: number }
+    expect(refreshSpy).toHaveBeenCalledTimes(1)
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+    expect(result.total).toBe(1)
+  })
+
+  it('saves last_cursor when a non-TOKEN_EXPIRED error happens mid-sync', async () => {
+    vi.spyOn(ctx.client, 'fetchPage')
+      .mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')], true, 'cursor-mid'))
+      .mockRejectedValueOnce(new Error('HTTP 500'))
+
+    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow('HTTP 500')
+    expect(getSyncState(ctx.db, 'last_cursor')).toBe('cursor-mid')
+  })
+
+  it('does not save last_cursor on first-page non-TOKEN_EXPIRED failure', async () => {
+    vi.spyOn(ctx.client, 'fetchPage').mockRejectedValueOnce(new Error('HTTP 500'))
+    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow('HTTP 500')
+    expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
+  })
+
+  it('upserts transactions whose category or merchant is null', async () => {
+    const tx = makeTx('tx-orphan', '2024-02-10', { category: null, merchant: null })
+    vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([tx]))
+
+    await handleSyncTransactions({}, ctx)
+    const row = ctx.db.prepare('SELECT category_id, merchant_id FROM transactions WHERE id = ?').get('tx-orphan') as { category_id: string | null; merchant_id: string | null }
+    expect(row.category_id).toBeNull()
+    expect(row.merchant_id).toBeNull()
+  })
+
+  it('continues paging when oldest tx on the page is still inside the cutoff window', async () => {
+    setSyncState(ctx.db, 'last_sync_date', '2024-02-01') // cutoff = 2024-01-02
+    const fetchSpy = vi.spyOn(ctx.client, 'fetchPage')
+      .mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10'), makeTx('tx2', '2024-01-15')], true, 'c1'))
+      .mockResolvedValueOnce(makePage([makeTx('tx3', '2024-01-10')]))
+
+    await handleSyncTransactions({}, ctx)
+    // oldest on page 1 (2024-01-15) is still > cutoff (2024-01-02), so page 2 must be fetched.
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('rolls back the DB transaction if an upsert throws', async () => {
+    vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')]))
+    // Force a failure inside the BEGIN/COMMIT block by replacing exec
+    const realExec = ctx.db.exec.bind(ctx.db)
+    let beginSeen = false
+    vi.spyOn(ctx.db, 'exec').mockImplementation((sql: string) => {
+      if (sql === 'BEGIN') { beginSeen = true; return realExec(sql) }
+      if (sql === 'COMMIT' && beginSeen) { throw new Error('boom') }
+      return realExec(sql)
+    })
+
+    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow('boom')
+    // After rollback, no row should be committed
+    const count = ctx.db.prepare('SELECT COUNT(*) as n FROM transactions').get() as { n: number }
+    expect(count.n).toBe(0)
+  })
+})
+
+describe('registerSyncTools', () => {
+  let ctx: AppContext
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2024-02-15'))
+    ctx = {
+      client: new CreditKarmaClient('valid-token'),
+      db: initDb(':memory:'),
+      mcpJsonPath: '/tmp/.mcp.json'
+    }
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('registers ck_sync_transactions with the expected schema', () => {
+    const { server, calls } = fakeServer()
+    registerSyncTools(server, ctx)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].name).toBe('ck_sync_transactions')
+    expect(calls[0].opts.inputSchema).toHaveProperty('force_full')
+  })
+
+  it('wraps the SyncResult as JSON-stringified MCP text content', async () => {
+    vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')]))
+    const { server, calls } = fakeServer()
+    registerSyncTools(server, ctx)
+
+    const result = await calls[0].handler({})
+    expect(result.content[0].type).toBe('text')
+    const body = JSON.parse(result.content[0].text)
+    expect(body).toMatchObject({ new: 1, updated: 0, total: 1 })
   })
 })

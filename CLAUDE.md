@@ -42,7 +42,7 @@ Each tool file exports tool definitions (MCP schemas) and a handler. `index.ts` 
 ## Environment
 
 ```
-CK_COOKIES=<value>    # CKAT cookie value, CKAT=<value>, or full Cookie header. Run `npm run auth -- .env` to capture via browser login, or use `ck_set_session` at runtime.
+CK_COOKIES=<value>    # Full Cookie header from a signed-in creditkarma.com request. The runtime parser also accepts a bare CKAT value or `CKAT=<value>` for legacy callers, but `npm run auth` always writes the full header and the refresh endpoint needs CKTRKID alongside CKAT. Capture via `npm run auth -- .env` or `ck_set_session` at runtime.
 CK_DB_PATH=<path>     # Path to SQLite database. Default: ~/.creditkarma-mcp/transactions.db
 ```
 
@@ -61,34 +61,41 @@ SKILL.md            # Claude Code skill — teaches Claude when/how to use the t
 
 ## Versioning
 
-Version appears in FOUR places — all must match:
+Version appears in SEVEN places — all must match:
 
 1. `package.json` → `"version"`
-2. `package-lock.json` → run `npm install --package-lock-only` after changing package.json
+2. `package-lock.json` → `npm install --package-lock-only` after changing package.json (or `npm version` does it automatically)
 3. `src/index.ts` → `Server` constructor `version` field
 4. `manifest.json` → `"version"`
+5. `server.json` → `"version"` and `packages[].version` (two entries)
+6. `.claude-plugin/plugin.json` → `"version"`
+7. `.claude-plugin/marketplace.json` → `plugins[].version` (and outer `version`)
 
 ### Important
 
-Do NOT manually bump versions or create tags unless the user explicitly asks. Versioning is handled by the **Cut & Bump** GitHub Action.
+Do NOT manually bump versions or create tags unless the user explicitly asks. Versioning is handled by the **Tag & Bump** GitHub Action (`.github/workflows/tag-and-bump.yml`).
 
 ### Release workflow
 
-Main is always one version ahead of the latest tag. To release, run the **Cut & Bump** GitHub Action (`cut-and-bump.yml`) which:
+Main is always one version ahead of the latest tag. To release, run the **Tag & Bump** GitHub Action which:
 
 1. Runs CI (build + test)
 2. Tags the current commit with the current version
-3. Bumps patch in all four files
+3. Bumps patch via `npm version patch` + a node script that walks every JSON version field
 4. Rebuilds, commits, and pushes main + tag
 5. The tag push triggers the **Release** workflow (CI + npm publish + GitHub release)
 
 ## Gotchas
 
 - **ESM + NodeNext**: imports must use `.js` extensions even for `.ts` source files (e.g. `import { db } from './db.js'`).
-- **CKAT auto-refresh**: access token (~15 min) is refreshed automatically using the refresh token (~8 hours). When both expire, `ck_set_session` is required.
+- **CKAT auto-refresh**: access token (~15 min, `TOKEN_TTL_MS` in `src/client.ts`) is refreshed automatically using the refresh token (~8 hours). When the refresh token is expired, the server logs a startup warning and `ck_set_session` will refuse to save the stale credentials — re-run `npm run auth` for a fresh Cookie header.
 - **Sync strategy**: incremental by default — fetches since last sync date with a 30-day overlap. Use `force_full: true` to re-fetch everything.
-- **Read-only SQL**: `ck_query_sql` only permits SELECT — no writes.
+- **Resume on failure**: `ck_sync_transactions` saves `last_cursor` to `sync_state` if a page fetch fails, so the next sync resumes from the same cursor. The cursor is cleared on success.
+- **Read-only SQL**: `ck_query_sql` only permits SELECT — no writes. Validation is comment-stripped before the SELECT regex check; `node:sqlite`'s `prepare()` itself rejects multi-statement input.
 - **Amounts**: negative = expense/debit, positive = credit/income.
 - **GraphQL quirk**: transactions are fetched via Credit Karma's internal GraphQL API, not a public API. The query is in `src/transaction.graphql` and must be copied to `dist/` at build time (`npm run build` handles this; `tsc` alone does not).
-- **Build before run**: `dist/` must exist before running the server manually.
+- **Build before run**: `dist/` must exist before running the server manually. `npm run build` runs `tsc` + copies `transaction.graphql` + bundles via esbuild into `dist/bundle.js` (the MCPB/manifest entry point).
+- **stdio transport**: the server logs warnings to **stderr** only — stdout is reserved for JSON-RPC. `dotenv` is loaded with `quiet: true` for the same reason.
+- **Persisted credentials**: `persistSession()` writes `.env` at mode 0600. Anything else handling secrets in this repo should match (e.g. `scripts/setup-auth.mjs` `writeEnvVar`).
+- **Coverage**: `vitest.config.ts` enforces 100% line/branch/function/statement coverage on `src/**` (excluding `src/index.ts`). Failing coverage fails CI.
 - **Plugin files**: `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` are for Claude Code plugin distribution — not part of the MCP runtime.

@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join, dirname } from 'path'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AppContext } from '../index.js'
+import { isJwtExpired, extractCookieValue } from '../client.js'
 
 export interface SetSessionArgs {
   /** Full Cookie header string from any CK network request */
@@ -10,10 +11,10 @@ export interface SetSessionArgs {
 }
 
 export async function handleSetSession(args: SetSessionArgs, ctx: AppContext): Promise<string> {
-  // Accept three formats:
-  //   1. Raw CKAT value:      eyJ...%3BeyJ...  or  eyJ...;eyJ...
-  //   2. Full Cookie header:  CKTRKID=...; CKAT=eyJ...%3BeyJ...; ...
-  //   3. Key=value pair:      CKAT=eyJ...%3BeyJ...
+  // Canonical input is the full Cookie header from a signed-in creditkarma.com
+  // request (`CKTRKID=...; CKAT=eyJ...%3BeyJ...; ...`). The parser remains
+  // lenient and also accepts a bare CKAT value or `CKAT=<value>` for callers
+  // that lifted just the cookie value from DevTools.
   const ckat = extractCookieValue(args.cookies, 'CKAT') ?? args.cookies.trim()
 
   const parts = ckat.replace('%3B', ';').split(';')
@@ -21,6 +22,12 @@ export async function handleSetSession(args: SetSessionArgs, ctx: AppContext): P
   const refreshToken = parts[1]?.trim() ?? null
 
   if (!accessToken) return 'Session not saved: could not extract a token from the provided value.'
+
+  // Refuse if the refresh JWT is already expired — saving stale credentials
+  // pollutes .env and produces confusing HTTP 400s from the refresh endpoint.
+  if (refreshToken && isJwtExpired(refreshToken)) {
+    return 'Session not saved: refresh token has already expired. Run `npm run auth` to capture fresh credentials via browser login.'
+  }
 
   ctx.client.setToken(accessToken)
   if (refreshToken) ctx.client.setRefreshToken(refreshToken)
@@ -32,11 +39,6 @@ export async function handleSetSession(args: SetSessionArgs, ctx: AppContext): P
     : 'Session saved. Access token, refresh token, and cookies stored.'
 }
 
-
-function extractCookieValue(cookieString: string, name: string): string | null {
-  const match = cookieString.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`))
-  return match ? match[1] : null
-}
 
 /** Persist session to .env. Returns a warning string or null on success. */
 export function persistSession(
@@ -63,7 +65,7 @@ export function persistSession(
     : existing + (existing.endsWith('\n') || existing === '' ? '' : '\n') + line + '\n'
 
   try {
-    writeFileSync(envPath, updated)
+    writeFileSync(envPath, updated, { mode: 0o600 })
   } catch {
     return '.env could not be written — session applied in memory only'
   }
@@ -77,10 +79,10 @@ export function registerAuthTools(server: McpServer, ctx: AppContext): void {
   server.registerTool(
     'ck_set_session',
     {
-      description: 'Store a Credit Karma session to enable automatic token refresh. Accepts any of: (1) the raw CKAT cookie value, (2) the full Cookie header string from any creditkarma.com request, or (3) just "CKAT=<value>". Capture via `npm run auth` from the creditkarma-mcp repo, or find CKAT in Chrome DevTools \u2192 Application \u2192 Cookies \u2192 creditkarma.com.',
+      description: 'Store a Credit Karma session to enable automatic token refresh. Pass the full Cookie header from a signed-in creditkarma.com request (Chrome DevTools \u2192 Network \u2192 any creditkarma.com request \u2192 Request Headers \u2192 right-click the `cookie` header \u2192 Copy value). Capture via `npm run auth` from the creditkarma-mcp repo.',
       annotations: { readOnlyHint: false },
       inputSchema: {
-        cookies: z.string().describe('One of: raw CKAT value, full Cookie header string, or "CKAT=<value>"'),
+        cookies: z.string().describe('Full Cookie header from a signed-in creditkarma.com request (contains CKAT, CKTRKID, etc.)'),
       },
     },
     async (args) => {

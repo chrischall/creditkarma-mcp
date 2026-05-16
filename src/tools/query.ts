@@ -4,6 +4,17 @@ import type { AppContext } from '../index.js'
 import type { Database } from '../db.js'
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Wrap a user-supplied string as a SQL LIKE pattern with `%`s on both sides
+ *  and the LIKE metacharacters (`%`, `_`, `\`) escaped. Pair with `ESCAPE '\'`
+ *  in the SQL fragment. */
+function likePattern(value: string): string {
+  return `%${value.replace(/[%_\\]/g, '\\$&')}%`
+}
+
+// ---------------------------------------------------------------------------
 // Shared query row type
 // ---------------------------------------------------------------------------
 
@@ -82,9 +93,9 @@ function buildWhere(filters: ListFilters): { where: string; params: (string | nu
 
   if (filters.start_date) { conditions.push('t.date >= ?'); params.push(filters.start_date) }
   if (filters.end_date) { conditions.push('t.date <= ?'); params.push(filters.end_date) }
-  if (filters.account) { conditions.push('a.name LIKE ? ESCAPE \'\\\''); params.push(`%${filters.account.replace(/[%_\\]/g, '\\$&')}%`) }
-  if (filters.category) { conditions.push('c.name LIKE ? ESCAPE \'\\\''); params.push(`%${filters.category.replace(/[%_\\]/g, '\\$&')}%`) }
-  if (filters.merchant) { conditions.push('m.name LIKE ? ESCAPE \'\\\''); params.push(`%${filters.merchant.replace(/[%_\\]/g, '\\$&')}%`) }
+  if (filters.account) { conditions.push("a.name LIKE ? ESCAPE '\\'"); params.push(likePattern(filters.account)) }
+  if (filters.category) { conditions.push("c.name LIKE ? ESCAPE '\\'"); params.push(likePattern(filters.category)) }
+  if (filters.merchant) { conditions.push("m.name LIKE ? ESCAPE '\\'"); params.push(likePattern(filters.merchant)) }
   if (filters.status) { conditions.push('t.status = ?'); params.push(filters.status) }
   if (filters.min_amount != null) { conditions.push('ABS(t.amount) >= ?'); params.push(filters.min_amount) }
   if (filters.max_amount != null) { conditions.push('ABS(t.amount) <= ?'); params.push(filters.max_amount) }
@@ -130,7 +141,7 @@ export async function handleGetSpendingByCategory(
 
   if (args.start_date) { conditions.push('t.date >= ?'); params.push(args.start_date) }
   if (args.end_date) { conditions.push('t.date <= ?'); params.push(args.end_date) }
-  if (args.account) { conditions.push('a.name LIKE ? ESCAPE \'\\\''); params.push(`%${args.account.replace(/[%_\\]/g, '\\$&')}%`) }
+  if (args.account) { conditions.push("a.name LIKE ? ESCAPE '\\'"); params.push(likePattern(args.account)) }
 
   const where = `WHERE ${conditions.join(' AND ')}`
 
@@ -173,7 +184,7 @@ export async function handleGetSpendingByMerchant(
 
   if (args.start_date) { conditions.push('t.date >= ?'); params.push(args.start_date) }
   if (args.end_date) { conditions.push('t.date <= ?'); params.push(args.end_date) }
-  if (args.category) { conditions.push('c.name LIKE ? ESCAPE \'\\\''); params.push(`%${args.category.replace(/[%_\\]/g, '\\$&')}%`) }
+  if (args.category) { conditions.push("c.name LIKE ? ESCAPE '\\'"); params.push(likePattern(args.category)) }
 
   const where = `WHERE ${conditions.join(' AND ')}`
   const limit = args.limit ?? 25

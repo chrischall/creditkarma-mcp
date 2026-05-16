@@ -18,7 +18,7 @@
       "environmentVariables": [
         {
           "name": "CK_COOKIES",
-          "description": "Your Credit Karma Cookie header (run `npm run auth` to capture via browser login, or copy CKAT from DevTools)",
+          "description": "The Cookie header from a signed-in creditkarma.com request. Run `npm run auth` to capture via browser login, or copy from DevTools → Network → any creditkarma.com request → Request Headers.",
           "isRequired": false,
           "format": "string",
           "isSecret": true

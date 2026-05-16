@@ -23,7 +23,7 @@ Add to `.mcp.json` in your project or `~/.claude/mcp.json`:
       "command": "npx",
       "args": ["-y", "creditkarma-mcp"],
       "env": {
-        "CK_COOKIES": "your-ckat-value-here"
+        "CK_COOKIES": "CKTRKID=...; CKAT=eyJ...%3BeyJ...; ..."
       }
     }
   }
@@ -47,7 +47,7 @@ Then add to `.mcp.json`:
       "command": "node",
       "args": ["/path/to/creditkarma-mcp/dist/index.js"],
       "env": {
-        "CK_COOKIES": "your-ckat-value-here"
+        "CK_COOKIES": "CKTRKID=...; CKAT=eyJ...%3BeyJ...; ..."
       }
     }
   }
@@ -60,33 +60,31 @@ Or use a `.env` file in the project directory with `CK_COOKIES=<value>`.
 
 **Scripted (recommended — source install):**
 ```bash
-npm run auth               # prints the CKAT value to the console
-npm run auth -- .env       # writes CK_COOKIES=<ckat> to .env
+npm run auth               # prints the Cookie header to the console
+npm run auth -- .env       # writes CK_COOKIES=<header> to .env
 ```
 
-Launches Chrome with a dedicated profile, waits for sign-in at creditkarma.com, then captures the `CKAT` cookie (the URL-encoded bundle of access + refresh JWTs). Use the printed value with Claude Desktop / MCPB, or the `.env` form when running from source.
+Launches Chrome with a dedicated profile, waits for sign-in at creditkarma.com, then captures the full session Cookie header (CKAT carries the access + refresh JWTs; CKTRKID and friends are needed by the refresh endpoint). Use the printed value with Claude Desktop / MCPB, or the `.env` form when running from source.
 
 **Manual (DevTools):**
 1. Log in to [creditkarma.com](https://www.creditkarma.com) in Chrome
-2. DevTools → **Application** → **Cookies** → `creditkarma.com`
-3. Copy the `CKAT` cookie value
-
-Accepts: raw CKAT value, `CKAT=<value>`, or the full Cookie header string from any CK network request.
+2. DevTools → **Network** → any creditkarma.com request → **Request Headers**
+3. Right-click the `cookie` header → **Copy value**
 
 ## Authentication
 
-Call `ck_set_session` with your cookie value to store credentials and enable auto-refresh.
+Call `ck_set_session` with your Cookie header to store credentials and enable auto-refresh.
 
 - Access token: ~15 min TTL, auto-refreshed transparently
 - Refresh token: ~8 hours TTL
-- When expired: re-run `npm run auth` (or grab a new CKAT cookie) and call `ck_set_session`
+- When expired: re-run `npm run auth` (or grab a fresh Cookie header) and call `ck_set_session`
 
 ## Tools
 
 ### Auth
 | Tool | Description |
 |------|-------------|
-| `ck_set_session(cookies)` | Store credentials — accepts CKAT value, `CKAT=<value>`, or full Cookie header |
+| `ck_set_session(cookies)` | Store credentials — paste the full Cookie header from a signed-in creditkarma.com request |
 
 ### Sync
 | Tool | Description |
@@ -106,7 +104,7 @@ Call `ck_set_session` with your cookie value to store credentials and enable aut
 ## Workflows
 
 **First-time setup:**
-1. Run `npm run auth` (or grab the `CKAT` cookie manually from creditkarma.com DevTools)
+1. Run `npm run auth` (or grab the Cookie header manually from a creditkarma.com request in DevTools)
 2. Paste into `CK_COOKIES` env var, or call `ck_set_session(cookies)` from within Claude
 3. `ck_sync_transactions` → initial full sync
 

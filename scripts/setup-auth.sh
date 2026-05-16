@@ -3,8 +3,9 @@
 # Credit Karma MCP auth setup (thin wrapper).
 #
 # Launches Chrome with a dedicated profile so you can sign in to
-# creditkarma.com, captures the CKAT cookie (holds the access + refresh
-# JWTs), and either prints it or writes it to an env file you pass.
+# creditkarma.com, captures the full session Cookie header (CKAT carries the
+# access + refresh JWTs; CKTRKID is needed by the refresh endpoint), and
+# either prints it or writes it to an env file you pass.
 #
 # Equivalent to running: npm run auth [-- ENV_FILE]
 #

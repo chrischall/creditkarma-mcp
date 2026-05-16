@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { writeEnvVar, cleanPastedCookie } from '../scripts/setup-auth.mjs'
+import { writeEnvVar, cleanPastedCookie, cookiesToHeader } from '../scripts/setup-auth.mjs'
 
 describe('writeEnvVar', () => {
   let tmpDir: string
@@ -76,5 +76,29 @@ describe('cleanPastedCookie', () => {
   it('strips repeated markers (paste split across multiple chunks)', () => {
     const raw = '[200~part1[201~[200~part2[201~'
     expect(cleanPastedCookie(raw)).toBe('part1part2')
+  })
+})
+
+describe('cookiesToHeader', () => {
+  it('joins puppeteer cookie objects into a Cookie header', () => {
+    const cookies = [
+      { name: 'CKTRKID', value: 'abc' },
+      { name: 'CKAT', value: 'eyJ...%3BeyJ...' },
+      { name: '_ga', value: 'GA1.x' }
+    ]
+    expect(cookiesToHeader(cookies)).toBe('CKTRKID=abc; CKAT=eyJ...%3BeyJ...; _ga=GA1.x')
+  })
+
+  it('returns an empty string for an empty list', () => {
+    expect(cookiesToHeader([])).toBe('')
+  })
+
+  it('skips cookies missing name or value', () => {
+    const cookies = [
+      { name: 'CKAT', value: 'v' },
+      { name: '', value: 'x' },
+      { name: 'X', value: '' }
+    ]
+    expect(cookiesToHeader(cookies)).toBe('CKAT=v')
   })
 })

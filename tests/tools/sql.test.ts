@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { handleQuerySql } from '../../src/tools/sql.js'
+import { handleQuerySql, registerSqlTools } from '../../src/tools/sql.js'
 import { initDb, upsertAccount, upsertCategory, upsertMerchant, upsertTransaction } from '../../src/db.js'
 import { CreditKarmaClient } from '../../src/client.js'
 import type { AppContext } from '../../src/index.js'
+import { fakeServer } from '../helpers.js'
 
 function makeCtx(): AppContext {
   const db = initDb(':memory:')
@@ -82,5 +83,28 @@ describe('ck_query_sql', () => {
   it('surfaces SQL errors with a clear message', async () => {
     await expect(handleQuerySql({ sql: 'SELECT * FROM nonexistent_table' }, ctx))
       .rejects.toThrow()
+  })
+})
+
+describe('registerSqlTools', () => {
+  let ctx: AppContext
+  beforeEach(() => { ctx = makeCtx() })
+
+  it('registers ck_query_sql with a sql input field', () => {
+    const { server, calls } = fakeServer()
+    registerSqlTools(server, ctx)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].name).toBe('ck_query_sql')
+    expect(calls[0].opts.inputSchema).toHaveProperty('sql')
+  })
+
+  it('handler returns query rows wrapped as MCP text content', async () => {
+    const { server, calls } = fakeServer()
+    registerSqlTools(server, ctx)
+    const result = await calls[0].handler({ sql: 'SELECT id FROM transactions' })
+    expect(result.content[0].type).toBe('text')
+    const body = JSON.parse(result.content[0].text)
+    expect(body.count).toBe(1)
+    expect(body.rows[0]).toMatchObject({ id: 'tx1' })
   })
 })

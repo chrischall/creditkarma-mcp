@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { CreditKarmaClient, type TransactionPage } from '../src/client.js'
+import {
+  CreditKarmaClient,
+  isJwtExpired,
+  decodeJwtPayload,
+  extractCookieValue,
+  type TransactionPage
+} from '../src/client.js'
+import { makeJwt } from './helpers.js'
 
 describe('CreditKarmaClient — token management', () => {
   let client: CreditKarmaClient
@@ -210,5 +217,221 @@ describe('CreditKarmaClient — refresh token', () => {
       new Response(JSON.stringify({ error: 'invalid_token' }), { status: 200 })
     )
     await expect(c.refreshAccessToken()).rejects.toThrow('Token refresh error')
+  })
+
+  it('refreshAccessToken includes status code in error', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(new Response('', { status: 400 }))
+    await expect(c.refreshAccessToken()).rejects.toThrow('HTTP 400')
+  })
+
+  it('refreshAccessToken includes JSON body snippet in error', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'invalid_grant' }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+    await expect(c.refreshAccessToken()).rejects.toThrow(/invalid_grant/)
+  })
+
+  it('refreshAccessToken flags non-JSON (HTML) error page in error', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response('<!DOCTYPE html><html>error</html>', {
+        status: 400,
+        headers: { 'content-type': 'text/html' }
+      })
+    )
+    await expect(c.refreshAccessToken()).rejects.toThrow(/non-JSON error page/)
+  })
+
+  it('refreshAccessToken hints expired refresh token in error for HTML 400', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response('<!DOCTYPE html>', {
+        status: 400,
+        headers: { 'content-type': 'text/html' }
+      })
+    )
+    await expect(c.refreshAccessToken()).rejects.toThrow(/refresh token/i)
+  })
+
+  it('refreshAccessToken labels empty body as "(empty body)" in the error', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response('', { status: 400, headers: { 'content-type': 'application/json' } })
+    )
+    await expect(c.refreshAccessToken()).rejects.toThrow('(empty body)')
+  })
+
+  it('refreshAccessToken truncates long error bodies to 200 chars + ellipsis', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    const long = '{"error":"' + 'x'.repeat(500) + '"}'
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(long, { status: 400, headers: { 'content-type': 'application/json' } })
+    )
+    await expect(c.refreshAccessToken()).rejects.toThrow(/…/)
+  })
+
+  it('refreshAccessToken survives a body-read failure', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    const fakeRes = {
+      ok: false,
+      status: 502,
+      text: () => Promise.reject(new Error('stream broken')),
+      headers: new Headers({ 'content-type': 'text/plain' })
+    } as unknown as Response
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(fakeRes)
+    await expect(c.refreshAccessToken()).rejects.toThrow('HTTP 502')
+  })
+
+  it('refreshAccessToken handles error responses with no content-type header', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    const fakeRes = {
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('oops'),
+      headers: new Headers()  // no content-type
+    } as unknown as Response
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(fakeRes)
+    await expect(c.refreshAccessToken()).rejects.toThrow(/HTTP 500.*oops/)
+  })
+
+  it('refreshAccessToken errors with "no accessToken in response" when response is empty JSON', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({}), { status: 200 })
+    )
+    await expect(c.refreshAccessToken()).rejects.toThrow(/no accessToken in response/)
+  })
+
+  it('refreshAccessToken says "ck_set_session" (not the obsolete ck_login) when no refresh token', async () => {
+    const c = new CreditKarmaClient('tok')
+    await expect(c.refreshAccessToken()).rejects.toThrow('ck_set_session')
+  })
+
+  it('refreshAccessToken omits authorization header when no access token', async () => {
+    const c = new CreditKarmaClient()
+    c.setRefreshToken('ref')
+    const spy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ accessToken: 'new' }), { status: 200 })
+    )
+    await c.refreshAccessToken()
+    const headers = (spy.mock.calls[0][1] as RequestInit).headers as Record<string, string>
+    expect(headers.authorization).toBeUndefined()
+  })
+
+  it('refreshAccessToken keeps the old refresh token if the response omits one', async () => {
+    const c = new CreditKarmaClient('old', 'keep-this-refresh')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ accessToken: 'new' }), { status: 200 })
+    )
+    await c.refreshAccessToken()
+    expect(c.getToken()).toBe('new')
+    expect(c.getRefreshToken()).toBe('keep-this-refresh')
+  })
+})
+
+describe('isJwtExpired', () => {
+  it('returns false for un-decodable strings (unknown — let the API decide)', () => {
+    expect(isJwtExpired('not-a-jwt')).toBe(false)
+    expect(isJwtExpired('')).toBe(false)
+  })
+
+  it('returns false when JWT has no exp claim', () => {
+    expect(isJwtExpired(makeJwt({ sub: 'x' }))).toBe(false)
+  })
+
+  it('returns true when JWT exp is in the past', () => {
+    const past = Math.floor(Date.now() / 1000) - 3600
+    expect(isJwtExpired(makeJwt({ exp: past }))).toBe(true)
+  })
+
+  it('returns false when JWT exp is in the future', () => {
+    const future = Math.floor(Date.now() / 1000) + 3600
+    expect(isJwtExpired(makeJwt({ exp: future }))).toBe(false)
+  })
+})
+
+describe('decodeJwtPayload', () => {
+  it('returns the parsed payload for a well-formed JWT', () => {
+    const payload = decodeJwtPayload(makeJwt({ sub: 'me', glid: 'abc' }))
+    expect(payload).toMatchObject({ sub: 'me', glid: 'abc' })
+  })
+
+  it('returns null for non-JWT strings', () => {
+    expect(decodeJwtPayload('')).toBeNull()
+    expect(decodeJwtPayload('no-dots')).toBeNull()
+    expect(decodeJwtPayload('one.two.three')).toBeNull()
+  })
+})
+
+describe('extractCookieValue', () => {
+  it('returns the value of a named cookie from a Cookie header', () => {
+    expect(extractCookieValue('CKTRKID=abc; CKAT=xyz', 'CKAT')).toBe('xyz')
+  })
+
+  it('returns null when the cookie is absent', () => {
+    expect(extractCookieValue('OTHER=x', 'CKAT')).toBeNull()
+  })
+
+  it('handles cookies at the start of the header', () => {
+    expect(extractCookieValue('CKAT=v; OTHER=x', 'CKAT')).toBe('v')
+  })
+})
+
+describe('CreditKarmaClient — refreshAccessToken header propagation', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('includes ck-trace-id when JWT has a glid claim', async () => {
+    const token = makeJwt({ glid: 'trace-me' })
+    const c = new CreditKarmaClient(token, 'ref', 'CKTRKID=cookie-id')
+    const spy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ accessToken: 'new' }), { status: 200 })
+    )
+    await c.refreshAccessToken()
+    const headers = (spy.mock.calls[0][1] as RequestInit).headers as Record<string, string>
+    expect(headers['ck-trace-id']).toBe('trace-me')
+    expect(headers['ck-cookie-id']).toBe('cookie-id')
+  })
+
+  it('omits ck-trace-id when JWT lacks a glid claim', async () => {
+    const token = makeJwt({ sub: 'x' })
+    const c = new CreditKarmaClient(token, 'ref')
+    const spy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ accessToken: 'new' }), { status: 200 })
+    )
+    await c.refreshAccessToken()
+    const headers = (spy.mock.calls[0][1] as RequestInit).headers as Record<string, string>
+    expect(headers['ck-trace-id']).toBeUndefined()
+  })
+})
+
+describe('CreditKarmaClient — parseTransactionPage error paths', () => {
+  let client: CreditKarmaClient
+  beforeEach(() => { client = new CreditKarmaClient('tok') })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('treats `errors` array on response as TOKEN_EXPIRED', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ errors: [{ message: 'unauthorized' }] }), { status: 200 })
+    )
+    await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
+  })
+
+  it('treats missing `prime` in response as TOKEN_EXPIRED', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: {} }), { status: 200 })
+    )
+    await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
+  })
+
+  it('treats `data: null` (entirely missing) as TOKEN_EXPIRED', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({}), { status: 200 })
+    )
+    await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
   })
 })

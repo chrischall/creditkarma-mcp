@@ -3,13 +3,14 @@
  * Credit Karma MCP auth setup.
  *
  * Launches the user's system Chrome with a dedicated profile, navigates to
- * creditkarma.com, waits for them to sign in, then captures the `CKAT` cookie
- * value (holds both the access and refresh JWTs, URL-encoded-joined with %3B).
+ * creditkarma.com, waits for them to sign in, then captures the full session
+ * cookie header (CKAT carries the access + refresh JWTs; CKTRKID and friends
+ * are needed by the refresh endpoint).
  *
  * Usage:
- *   setup-auth.mjs                       -> prints CKAT to stdout
- *   setup-auth.mjs <ENV_FILE>            -> writes CK_COOKIES=<ckat> to ENV_FILE
- *   setup-auth.mjs --manual [<ENV_FILE>] -> prompts you to paste a CKAT value
+ *   setup-auth.mjs                       -> prints the Cookie header to stdout
+ *   setup-auth.mjs <ENV_FILE>            -> writes CK_COOKIES=<header> to ENV_FILE
+ *   setup-auth.mjs --manual [<ENV_FILE>] -> prompts you to paste a Cookie header
  *                                           copied from your normal Chrome.
  *                                           Use this if the automated flow
  *                                           hits Intuit/Akamai bot detection.
@@ -53,6 +54,17 @@ function findChrome() {
     if (fs.existsSync(p)) return p;
   }
   return null;
+}
+
+/**
+ * Serialize a Puppeteer cookie jar (array of {name, value}) into a Cookie
+ * header string. Drops entries missing either field. Pure / exported for tests.
+ */
+export function cookiesToHeader(cookies) {
+  return cookies
+    .filter((c) => c?.name && c?.value)
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
 }
 
 /**
@@ -112,12 +124,12 @@ async function main() {
   if (args.includes('-h') || args.includes('--help')) {
     console.log('Usage: setup-auth.mjs [--manual] [ENV_FILE]');
     console.log('');
-    console.log('  With no arg, prints the CKAT cookie value to stdout.');
-    console.log('  With ENV_FILE, writes CK_COOKIES=<ckat> to that file');
+    console.log('  With no arg, prints the captured Cookie header to stdout.');
+    console.log('  With ENV_FILE, writes CK_COOKIES=<header> to that file');
     console.log('  (e.g. .env) at mode 0600 and does not print the secret.');
     console.log('  With --manual, skips the browser and prompts you to paste a');
-    console.log('  CKAT value copied from your normal Chrome (DevTools →');
-    console.log('  Application → Cookies → https://www.creditkarma.com).');
+    console.log('  Cookie header copied from your normal Chrome (DevTools →');
+    console.log('  Network → any creditkarma.com request → Request Headers).');
     return;
   }
   const manual = args.includes('--manual');
@@ -133,7 +145,7 @@ async function main() {
   if (!chromePath) {
     console.error(
       `Could not find Google Chrome. Install from https://chrome.google.com/` +
-        ` or run the manual steps in README.md (DevTools → copy CKAT cookie).`
+        ` or run the manual steps in README.md (DevTools → copy Cookie header).`
     );
     process.exit(1);
   }
@@ -149,7 +161,7 @@ async function main() {
   console.log('');
   console.log('The browser will open on creditkarma.com. Click "Sign In" at the');
   console.log('top right and complete your login — the script will detect the');
-  console.log('CKAT cookie and close the browser automatically.');
+  console.log('session cookies and close the browser automatically.');
   console.log('');
   console.log('If you hit "A technical issue has unexpectedly occurred" on sign-in,');
   console.log('that is Intuit/Akamai bot detection. Bail out (Ctrl+C) and re-run');
@@ -197,9 +209,9 @@ async function main() {
   // issue has unexpectedly occurred". A real click goes through that handler.
   await page.goto('https://www.creditkarma.com/', { waitUntil: 'domcontentloaded' });
 
-  const ckat = await waitForLogin(page);
+  const cookieHeader = await waitForLogin(page);
 
-  if (!ckat) {
+  if (!cookieHeader) {
     killBrowser(browser);
     console.error(
       `Timed out after ${TIMEOUT_MS / 60000} minutes without detecting a login.`
@@ -207,7 +219,7 @@ async function main() {
     console.error('');
     console.error('If sign-in kept failing with "A technical issue has unexpectedly');
     console.error('occurred", that is bot detection. Re-run with --manual to paste');
-    console.error('the cookie from your normal Chrome session instead.');
+    console.error('the Cookie header from your normal Chrome session instead.');
     process.exit(1);
   }
 
@@ -216,7 +228,7 @@ async function main() {
   killBrowser(browser);
 
   if (envFile) {
-    writeEnvVar(envFile, 'CK_COOKIES', ckat);
+    writeEnvVar(envFile, 'CK_COOKIES', cookieHeader);
     console.log('');
     console.log(`Wrote CK_COOKIES to ${envFile}`);
     console.log('Restart Claude to pick it up.');
@@ -224,7 +236,7 @@ async function main() {
     console.log('');
     console.log('CK_COOKIES (paste into Claude Desktop / MCPB config):');
     console.log('');
-    console.log(ckat);
+    console.log(cookieHeader);
     console.log('');
     console.log('Tip: re-run with a path to write it directly to an env file,');
     console.log('e.g. `npm run auth -- .env`.');
@@ -233,35 +245,33 @@ async function main() {
 
 /**
  * Manual cookie capture: prompts the user (no-echo, like a password prompt) to
- * paste a CKAT value copied from their normal Chrome — where Intuit/Akamai's
+ * paste a Cookie header copied from their normal Chrome — where Intuit/Akamai's
  * auth-endpoint risk check accepts the session. Use when the automated
- * puppeteer flow keeps failing on the sign-in POST. Accepts the raw CKAT
- * value, a `CKAT=<value>` pair, or a full Cookie header; the runtime parser
- * in src/client.ts handles all three.
+ * puppeteer flow keeps failing on the sign-in POST. The runtime parser in
+ * src/tools/auth.ts also accepts a bare CKAT value or `CKAT=<value>`, but the
+ * full Cookie header is preferred because refresh requests need CKTRKID.
  */
 async function runManual(envFile) {
   console.log('');
   console.log('Manual cookie capture');
   console.log('=====================');
   console.log('1. Sign in to https://www.creditkarma.com in your normal Chrome');
-  console.log('2. Open DevTools (Cmd+Opt+I) → Application → Cookies →');
-  console.log('   https://www.creditkarma.com');
-  console.log('3. Find the "CKAT" cookie and copy its Value (long URL-encoded');
-  console.log('   string starting with eyJ... or similar). You can also copy');
-  console.log('   the entire Cookie header from any creditkarma.com request.');
+  console.log('2. Open DevTools (Cmd+Opt+I) → Network tab');
+  console.log('3. Click any request to creditkarma.com → Request Headers →');
+  console.log('   right-click the "cookie" header → Copy value');
   console.log('4. Paste it at the prompt below and press Enter. Input is not');
   console.log('   echoed — your terminal will look frozen until you press Enter.');
   console.log('');
 
-  const ckat = await promptSecret('CKAT cookie (or full Cookie header): ');
+  const cookieHeader = await promptSecret('Cookie header: ');
 
-  if (!ckat) {
+  if (!cookieHeader) {
     console.error('No value entered. Aborting.');
     process.exit(1);
   }
 
   if (envFile) {
-    writeEnvVar(envFile, 'CK_COOKIES', ckat);
+    writeEnvVar(envFile, 'CK_COOKIES', cookieHeader);
     console.log('');
     console.log(`Wrote CK_COOKIES to ${envFile}`);
     console.log('Restart Claude to pick it up.');
@@ -269,7 +279,7 @@ async function runManual(envFile) {
     console.log('');
     console.log('CK_COOKIES (paste into Claude Desktop / MCPB config):');
     console.log('');
-    console.log(ckat);
+    console.log(cookieHeader);
   }
 }
 
@@ -361,15 +371,19 @@ function killBrowser(browser) {
 }
 
 /**
- * Polls the page's cookie jar every second until the CKAT cookie appears and
- * returns its value. Returns null on timeout.
+ * Polls the page's cookie jar every second until the CKAT cookie appears, then
+ * returns the full Cookie header (all creditkarma.com cookies serialized as
+ * `name=value; ...`). The refresh endpoint needs CKTRKID and friends alongside
+ * CKAT, so we capture the whole jar rather than the CKAT value alone. Returns
+ * null on timeout.
  */
 async function waitForLogin(page) {
   const start = Date.now();
   while (Date.now() - start < TIMEOUT_MS) {
     const cookies = await page.cookies('https://www.creditkarma.com').catch(() => []);
-    const ckat = cookies.find((c) => c.name === REQUIRED_COOKIE);
-    if (ckat?.value) return ckat.value;
+    if (cookies.some((c) => c.name === REQUIRED_COOKIE && c.value)) {
+      return cookiesToHeader(cookies);
+    }
     await new Promise((r) => setTimeout(r, 1000));
   }
   return null;

@@ -2,16 +2,21 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { handleSetSession, persistSession } from '../../src/tools/auth.js'
+import { handleSetSession, persistSession, registerAuthTools } from '../../src/tools/auth.js'
 import { CreditKarmaClient } from '../../src/client.js'
 import { initDb } from '../../src/db.js'
 import type { AppContext } from '../../src/index.js'
+import { fakeServer } from '../helpers.js'
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `ck-test-${Date.now()}`)
   mkdirSync(dir, { recursive: true })
   return dir
 }
+
+import { makeJwt } from '../helpers.js'
+const expiredJwt = makeJwt({ exp: Math.floor(Date.now() / 1000) - 3600 })
+const validJwt = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 })
 
 describe('ck_set_session', () => {
   let ctx: AppContext
@@ -74,6 +79,40 @@ describe('ck_set_session', () => {
     expect(contents).toContain('OTHER=x')
     expect(contents).not.toContain('old-value')
   })
+
+  it('refuses to save when the refresh JWT is already expired', async () => {
+    const cookies = `CKAT=${validJwt}%3B${expiredJwt}`
+    const result = await handleSetSession({ cookies }, ctx)
+
+    expect(result).toMatch(/expired/i)
+    expect(result).toMatch(/npm run auth/)
+    expect(ctx.client.getToken()).toBeNull()
+    expect(ctx.client.getRefreshToken()).toBeNull()
+    expect(existsSync(join(tmpDir, '.env'))).toBe(false)
+  })
+
+  it('saves when access JWT is expired but refresh JWT is still valid', async () => {
+    const cookies = `CKAT=${expiredJwt}%3B${validJwt}`
+    const result = await handleSetSession({ cookies }, ctx)
+
+    expect(result).toMatch(/saved/i)
+    expect(ctx.client.getToken()).toBe(expiredJwt)
+    expect(ctx.client.getRefreshToken()).toBe(validJwt)
+  })
+
+  it('returns a "could not extract" message when input has no token', async () => {
+    const result = await handleSetSession({ cookies: '' }, ctx)
+    expect(result).toMatch(/could not extract/i)
+    expect(ctx.client.getToken()).toBeNull()
+  })
+
+  it('reports the persistSession warning when .env cannot be written', async () => {
+    // Point mcpJsonPath at a parent that doesn't exist so writeFileSync throws.
+    ctx.mcpJsonPath = '/nonexistent-dir-for-warning-test/.mcp.json'
+    const result = await handleSetSession({ cookies: 'CKAT=tok' }, ctx)
+    expect(result).toMatch(/Warning:/)
+    expect(result).toMatch(/could not be written/i)
+  })
 })
 
 describe('persistSession', () => {
@@ -109,6 +148,70 @@ describe('persistSession', () => {
     const result = persistSession(null, mcpJsonPath)
     expect(result).toBeNull()
     expect(existsSync(join(tmpDir, '.env'))).toBe(false)
+  })
+
+  it('writes .env at mode 0600 (owner read/write only)', () => {
+    const mcpJsonPath = join(tmpDir, '.mcp.json')
+    persistSession('CKAT=tok', mcpJsonPath)
+    const mode = require('fs').statSync(join(tmpDir, '.env')).mode & 0o777
+    expect(mode).toBe(0o600)
+  })
+
+  it('inserts a separating newline when appending to a file with no trailing newline', () => {
+    const envPath = join(tmpDir, '.env')
+    writeFileSync(envPath, 'CK_DB_PATH=val') // no trailing newline
+    persistSession('CKAT=tok', join(tmpDir, '.mcp.json'))
+    expect(readFileSync(envPath, 'utf8')).toBe('CK_DB_PATH=val\nCK_COOKIES=CKAT=tok\n')
+  })
+
+  it('returns a warning when an existing .env is unreadable', () => {
+    const envPath = join(tmpDir, '.env')
+    writeFileSync(envPath, 'CK_DB_PATH=val\n', { mode: 0o000 })
+    try {
+      const result = persistSession('CKAT=tok', join(tmpDir, '.mcp.json'))
+      expect(result).toMatch(/could not be read/i)
+    } finally {
+      // restore perms so afterEach rmSync can clean up
+      require('fs').chmodSync(envPath, 0o600)
+    }
+  })
+
+  it('returns a warning when .env cannot be written', () => {
+    // mcpJsonPath inside a nonexistent dir => write to a nonexistent dir
+    const result = persistSession('CKAT=tok', '/nonexistent-dir-for-test/.mcp.json')
+    expect(result).toMatch(/could not be written/i)
+  })
+})
+
+describe('registerAuthTools', () => {
+  it('registers ck_set_session with a string `cookies` field', () => {
+    const ctx: AppContext = {
+      client: new CreditKarmaClient(),
+      db: initDb(':memory:'),
+      mcpJsonPath: join(makeTmpDir(), '.mcp.json')
+    }
+    const { server, calls } = fakeServer()
+    registerAuthTools(server, ctx)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].name).toBe('ck_set_session')
+    expect(calls[0].opts.description).toMatch(/Credit Karma/)
+    expect(calls[0].opts.inputSchema).toHaveProperty('cookies')
+  })
+
+  it('wraps handler result as MCP text content', async () => {
+    const tmpDir = makeTmpDir()
+    const ctx: AppContext = {
+      client: new CreditKarmaClient(),
+      db: initDb(':memory:'),
+      mcpJsonPath: join(tmpDir, '.mcp.json')
+    }
+    const { server, calls } = fakeServer()
+    registerAuthTools(server, ctx)
+
+    const result = await calls[0].handler({ cookies: 'CKAT=tok' })
+    expect(result.content[0].type).toBe('text')
+    expect(result.content[0].text).toMatch(/saved/i)
   })
 })
 

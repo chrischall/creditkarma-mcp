@@ -106,7 +106,7 @@ export class CreditKarmaClient {
    * Requires a refresh token and session cookies (captured after login).
    */
   async refreshAccessToken(): Promise<string> {
-    if (!this.refreshToken) throw new Error('NO_REFRESH_TOKEN: Call ck_login first.')
+    if (!this.refreshToken) throw new Error('NO_REFRESH_TOKEN: Call ck_set_session first.')
 
     const headers: Record<string, string> = {
       'content-type': 'application/json',
@@ -136,7 +136,15 @@ export class CreditKarmaClient {
       body: JSON.stringify({ refreshToken: this.refreshToken })
     })
 
-    if (!res.ok) throw new Error(`Token refresh failed: HTTP ${res.status}`)
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      const contentType = res.headers.get('content-type') ?? ''
+      const looksHtml = !contentType.includes('json') && /^\s*<(!doctype|html)/i.test(body)
+      const detail = looksHtml
+        ? '(non-JSON error page — refresh token likely expired or session invalid; re-run `npm run auth`)'
+        : (body.length > 200 ? body.slice(0, 200) + '…' : body || '(empty body)')
+      throw new Error(`Token refresh failed: HTTP ${res.status} — ${detail}`)
+    }
     const json = await res.json() as { accessToken?: string; refreshToken?: string; error?: string }
     if (json.error || !json.accessToken) throw new Error(`Token refresh error: ${json.error ?? 'no accessToken in response'}`)
 
@@ -164,16 +172,35 @@ export class CreditKarmaClient {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function extractGlidFromJwt(token: string): string | null {
+/** Decode the unverified JWT payload claims. Returns null if the token is not
+ *  a well-formed JWT. We never use this for authorization — only for reading
+ *  claims (exp, glid) on tokens we already trust. */
+export function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString())
-    return payload.glid ?? null
+    return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()) as Record<string, unknown>
   } catch {
     return null
   }
 }
 
-function extractCookieValue(cookieString: string, name: string): string | null {
+/** True only if we can decode the JWT and its `exp` claim is in the past.
+ *  Returns false for un-decodable strings (let the API decide) or tokens
+ *  without an `exp` claim. */
+export function isJwtExpired(token: string): boolean {
+  const p = decodeJwtPayload(token)
+  if (!p || typeof p.exp !== 'number') return false
+  return p.exp * 1000 < Date.now()
+}
+
+function extractGlidFromJwt(token: string): string | null {
+  const p = decodeJwtPayload(token)
+  const glid = p?.glid
+  return typeof glid === 'string' ? glid : null
+}
+
+/** Parse a single cookie value out of a Cookie header string. Exported so the
+ *  auth tool and bootstrap don't each maintain their own copy. */
+export function extractCookieValue(cookieString: string, name: string): string | null {
   const match = cookieString.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`))
   return match ? match[1] : null
 }

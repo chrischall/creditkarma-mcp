@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { initDb, upsertAccount, upsertCategory, upsertMerchant, upsertTransaction } from '../../src/db.js'
 import {
   handleListTransactions, handleGetRecentTransactions,
-  handleGetSpendingByCategory, handleGetSpendingByMerchant, handleGetAccountSummary
+  handleGetSpendingByCategory, handleGetSpendingByMerchant, handleGetAccountSummary,
+  registerQueryTools
 } from '../../src/tools/query.js'
 import { CreditKarmaClient } from '../../src/client.js'
 import type { AppContext } from '../../src/index.js'
+import { fakeServer } from '../helpers.js'
 
 function seedDb(db: ReturnType<typeof initDb>) {
   upsertAccount(db, { id: 'a1', name: 'Chase Checking' })
@@ -306,5 +308,71 @@ describe('ck_get_account_summary', () => {
     const chase = result.rows.find(r => r.account === 'Chase Checking')!
     expect(chase.debits).toBeCloseTo(5.50)
     expect(chase.count).toBe(1)
+  })
+})
+
+describe('registerQueryTools', () => {
+  let ctx: AppContext
+  beforeEach(() => {
+    const db = initDb(':memory:')
+    seedDb(db)
+    ctx = makeCtx(db)
+  })
+
+  it('registers all five read-only query tools', () => {
+    const { server, calls } = fakeServer()
+    registerQueryTools(server, ctx)
+    expect(calls.map(c => c.name)).toEqual([
+      'ck_list_transactions',
+      'ck_get_recent_transactions',
+      'ck_get_spending_by_category',
+      'ck_get_spending_by_merchant',
+      'ck_get_account_summary'
+    ])
+    for (const c of calls) {
+      expect((c.opts.annotations as { readOnlyHint: boolean })?.readOnlyHint).toBe(true)
+    }
+  })
+
+  it('list handler returns JSON-stringified rows', async () => {
+    const { server, calls } = fakeServer()
+    registerQueryTools(server, ctx)
+    const list = calls.find(c => c.name === 'ck_list_transactions')!
+    const result = await list.handler({ limit: 2 })
+    const body = JSON.parse(result.content[0].text)
+    expect(body.transactions).toHaveLength(2)
+  })
+
+  it('recent handler honors limit', async () => {
+    const { server, calls } = fakeServer()
+    registerQueryTools(server, ctx)
+    const recent = calls.find(c => c.name === 'ck_get_recent_transactions')!
+    const result = await recent.handler({ limit: 3 })
+    const body = JSON.parse(result.content[0].text)
+    expect(body.transactions).toHaveLength(3)
+  })
+
+  it('spending-by-category handler returns rows', async () => {
+    const { server, calls } = fakeServer()
+    registerQueryTools(server, ctx)
+    const h = calls.find(c => c.name === 'ck_get_spending_by_category')!
+    const body = JSON.parse((await h.handler({})).content[0].text)
+    expect(body.rows.length).toBeGreaterThan(0)
+  })
+
+  it('spending-by-merchant handler returns rows', async () => {
+    const { server, calls } = fakeServer()
+    registerQueryTools(server, ctx)
+    const h = calls.find(c => c.name === 'ck_get_spending_by_merchant')!
+    const body = JSON.parse((await h.handler({})).content[0].text)
+    expect(body.rows.length).toBeGreaterThan(0)
+  })
+
+  it('account-summary handler returns rows', async () => {
+    const { server, calls } = fakeServer()
+    registerQueryTools(server, ctx)
+    const h = calls.find(c => c.name === 'ck_get_account_summary')!
+    const body = JSON.parse((await h.handler({})).content[0].text)
+    expect(body.rows.length).toBeGreaterThan(0)
   })
 })

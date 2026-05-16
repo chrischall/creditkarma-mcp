@@ -19,7 +19,7 @@ export interface SyncResult {
 export async function handleSyncTransactions(
   args: SyncArgs,
   ctx: AppContext
-): Promise<SyncResult | string> {
+): Promise<SyncResult> {
   // Auto-refresh if token expired and we have a refresh token
   if (ctx.client.isTokenExpired() || !ctx.client.getToken()) {
     await refreshOrThrow(ctx)
@@ -113,7 +113,7 @@ export async function handleSyncTransactions(
 
 async function refreshOrThrow(ctx: AppContext): Promise<void> {
   if (!ctx.client.getRefreshToken()) {
-    throw new Error('TOKEN_EXPIRED: No valid token. Run `npm run auth` to capture a fresh Cookie header via browser login, or call ck_set_session with your CKAT cookie.')
+    throw new Error('TOKEN_EXPIRED: No valid token. Run `npm run auth` to capture a fresh Cookie header via browser login, or call ck_set_session with the Cookie header from a signed-in creditkarma.com request.')
   }
   await ctx.client.refreshAccessToken()
 }
@@ -148,8 +148,7 @@ export function registerSyncTools(server: McpServer, ctx: AppContext): void {
     },
     async (args) => {
       const result = await handleSyncTransactions(args, ctx)
-      const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2)
-      return { content: [{ type: 'text', text }] }
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
     }
   )
 }

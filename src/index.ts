@@ -3,7 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { CreditKarmaClient } from './client.js'
+import { CreditKarmaClient, isJwtExpired, extractCookieValue } from './client.js'
 import { initDb } from './db.js'
 import type { Database } from './db.js'
 
@@ -43,18 +43,14 @@ export interface AppContext {
   mcpJsonPath: string
 }
 
-function extractCookieValue(cookieString: string, name: string): string | undefined {
-  const match = cookieString.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`))
-  return match ? match[1] : undefined
-}
-
 async function main() {
   const dbPath = readVar('CK_DB_PATH') || join(homedir(), '.creditkarma-mcp', 'transactions.db')
   const mcpJsonPath = join(__dirname, '..', '.mcp.json')
 
   const cookies = readVar('CK_COOKIES') || undefined
 
-  // Bootstrap tokens from CK_COOKIES: accepts raw CKAT, CKAT=<value>, or full cookie string
+  // Canonical CK_COOKIES is a full Cookie header. Parser stays lenient and
+  // also accepts a bare CKAT value or `CKAT=<value>` from legacy configs.
   let token: string | undefined
   let refreshToken: string | undefined
   if (cookies) {
@@ -62,6 +58,11 @@ async function main() {
     const parts = ckat.replace('%3B', ';').split(';')
     token = parts[0]?.trim() || undefined
     refreshToken = parts[1]?.trim() || undefined
+  }
+
+
+  if (refreshToken && isJwtExpired(refreshToken)) {
+    console.error('[creditkarma-mcp] Warning: refresh token in CK_COOKIES has expired. Run `npm run auth` (or call ck_set_session) to capture fresh credentials.')
   }
 
   const ctx: AppContext = {

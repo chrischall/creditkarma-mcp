@@ -33,7 +33,8 @@
         "${__dirname}/dist/bundle.js"
       ],
       "env": {
-        "CK_COOKIES": "${user_config.ck_cookies}"
+        "CK_COOKIES": "${user_config.ck_cookies}",
+        "CK_DB_PATH": "${user_config.ck_db_path}"
       }
     }
   },
@@ -44,6 +45,12 @@
       "description": "Your Credit Karma Cookie header (run `npm run auth` from the repo to capture via browser login, or copy CKAT from DevTools → Application → Cookies)",
       "required": false,
       "sensitive": true
+    },
+    "ck_db_path": {
+      "type": "string",
+      "title": "Database File Path",
+      "description": "Optional override for the SQLite database file. Defaults to ~/.creditkarma-mcp/transactions.db. Set to a custom absolute path if you want the data stored elsewhere.",
+      "required": false
     }
   },
   "tools": [

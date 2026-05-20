@@ -78,7 +78,7 @@ async function main() {
   }
 
   const server = new McpServer(
-    { name: 'creditkarma-mcp', version: '2.0.9' }
+    { name: 'creditkarma-mcp', version: '2.0.10' }
   )
 
   registerAuthTools(server, ctx)

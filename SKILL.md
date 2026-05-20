@@ -149,3 +149,4 @@ sync_state   (key, value)
 - Amounts: negative = expense/debit, positive = credit/income
 - `ck_query_sql` only allows SELECT — no writes to Credit Karma data
 - Sync saves a resume cursor — interrupted syncs can be resumed automatically
+- `accounts.id` is a synthesized stable key in the form `<provider>|<last4>` (e.g. `Citi|2630`, `Ally|7133`) because CK's API returns empty `account.id` strings. The same card under two provider-name spellings shows as two rows.

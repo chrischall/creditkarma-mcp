@@ -26,7 +26,8 @@ All tools are prefixed `ck_` (e.g. `ck_sync_transactions`, `ck_list_transactions
 src/
   index.ts              # MCP server entry point — registers all tools, starts stdio transport
   client.ts             # Credit Karma GraphQL client with auto-refresh
-  db.ts                 # SQLite schema and upsert helpers
+  db.ts                 # SQLite schema and upsert helpers (incl. backfillAccountIds)
+  accountId.ts          # Synthesize a stable account id from provider + last-4 (CK returns empty ids)
   transaction.graphql   # GraphQL query for transactions
   tools/
     auth.ts             # ck_set_session
@@ -116,6 +117,7 @@ Main is always one version ahead of the latest tag. To release, run the **Tag & 
 - **Resume on failure**: `ck_sync_transactions` saves `last_cursor` to `sync_state` if a page fetch fails, so the next sync resumes from the same cursor. The cursor is cleared on success.
 - **Read-only SQL**: `ck_query_sql` only permits SELECT — no writes. Validation is comment-stripped before the SELECT regex check; `node:sqlite`'s `prepare()` itself rejects multi-statement input.
 - **Amounts**: negative = expense/debit, positive = credit/income.
+- **Empty `account.id` from CK**: `transactionsHub` returns `""` for every `account.id`, even across multi-account responses. `src/accountId.ts` synthesizes `<trimmed-providerName>|<last-4-from-display>` (e.g. `Citi|2630`) so each account gets a stable row. `backfillAccountIds()` runs once on server startup to repair legacy DB rows from `raw_json`. Caveat: the same physical card under two `providerName` strings (e.g. `"Capital One"` vs `"Capital One - Credit Cards"`) appears as two synthetic accounts — acceptable since there's no canonical provider source.
 - **GraphQL quirk**: transactions are fetched via Credit Karma's internal GraphQL API, not a public API. The query is in `src/transaction.graphql` and must be copied to `dist/` at build time (`npm run build` handles this; `tsc` alone does not).
 - **Build before run**: `dist/` must exist before running the server manually. `npm run build` runs `tsc` + copies `transaction.graphql` + bundles via esbuild into `dist/bundle.js` (the MCPB/manifest entry point).
 - **stdio transport**: the server logs warnings to **stderr** only — stdout is reserved for JSON-RPC. `dotenv` is loaded with `quiet: true` for the same reason.

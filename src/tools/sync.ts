@@ -5,6 +5,7 @@ import {
   upsertAccount, upsertCategory, upsertMerchant, upsertTransaction,
   getSyncState, setSyncState
 } from '../db.js'
+import { deriveAccountId } from '../accountId.js'
 
 export interface SyncArgs {
   force_full?: boolean
@@ -71,15 +72,16 @@ export async function handleSyncTransactions(
           .prepare('SELECT id FROM transactions WHERE id = ?')
           .get(tx.id)
 
+        const accountId = deriveAccountId(tx.account)
         upsertAccount(ctx.db, {
-          id: tx.account.id, name: tx.account.name, type: tx.account.type,
+          id: accountId, name: tx.account.name, type: tx.account.type,
           providerName: tx.account.providerName, display: tx.account.accountTypeAndNumberDisplay
         })
         if (tx.category) upsertCategory(ctx.db, { id: tx.category.id, name: tx.category.name, type: tx.category.type })
         if (tx.merchant) upsertMerchant(ctx.db, { id: tx.merchant.id, name: tx.merchant.name })
         upsertTransaction(ctx.db, {
           id: tx.id, date: tx.date, description: tx.description, status: tx.status,
-          amount: tx.amount.value, accountId: tx.account.id,
+          amount: tx.amount.value, accountId,
           categoryId: tx.category?.id ?? null,
           merchantId: tx.merchant?.id ?? null,
           rawJson: JSON.stringify(tx)

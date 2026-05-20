@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { rmSync } from 'fs'
 import {
   initDb,
   upsertAccount, upsertCategory, upsertMerchant, upsertTransaction,
-  getSyncState, setSyncState,
+  getSyncState, setSyncState, backfillAccountIds,
   type AccountRow, type CategoryRow, type MerchantRow, type TransactionRow
 } from '../src/db.js'
 import { DatabaseSync } from 'node:sqlite'
@@ -246,5 +246,142 @@ describe('sync state', () => {
     setSyncState(db, 'last_cursor', 'abc123')
     expect(getSyncState(db, 'last_sync_date')).toBe('2024-01-01')
     expect(getSyncState(db, 'last_cursor')).toBe('abc123')
+  })
+})
+
+describe('backfillAccountIds', () => {
+  let db: Database.Database
+  beforeEach(() => { db = initDb(':memory:') })
+
+  const seedBrokenTx = (id: string, account: { name: string, type?: string, providerName?: string, accountTypeAndNumberDisplay?: string }, txAcctId = '') => {
+    upsertAccount(db, { id: txAcctId, name: account.name, type: account.type, providerName: account.providerName, display: account.accountTypeAndNumberDisplay })
+    upsertTransaction(db, {
+      id, date: '2024-02-10', description: 'x', status: 'posted', amount: -1,
+      accountId: txAcctId, categoryId: null, merchantId: null,
+      rawJson: JSON.stringify({ id, account: { id: '', ...account } })
+    })
+  }
+
+  it('returns zero counts when nothing needs backfill', () => {
+    upsertAccount(db, { id: 'real-id', name: 'X' })
+    upsertTransaction(db, {
+      id: 'tx1', date: '2024-02-10', description: 'x', status: 'posted', amount: -1,
+      accountId: 'real-id', categoryId: null, merchantId: null, rawJson: null
+    })
+    const result = backfillAccountIds(db)
+    expect(result).toEqual({ txsUpdated: 0, accountsCreated: 0 })
+  })
+
+  it('rebuilds accounts and rewrites tx.account_id from raw_json', () => {
+    seedBrokenTx('tx-ally', { name: 'Spending', type: 'BANK', providerName: 'Ally   ', accountTypeAndNumberDisplay: 'Bank (..7133)' })
+    seedBrokenTx('tx-citi', { name: 'AAdvantage', type: 'CREDIT', providerName: 'Citi', accountTypeAndNumberDisplay: 'Credit (..2630)' })
+
+    const result = backfillAccountIds(db)
+    expect(result).toEqual({ txsUpdated: 2, accountsCreated: 2 })
+
+    const accounts = db.prepare('SELECT id, name, provider_name FROM accounts ORDER BY id').all() as Array<{ id: string, name: string, provider_name: string }>
+    expect(accounts).toEqual([
+      { id: 'Ally|7133', name: 'Spending', provider_name: 'Ally   ' },
+      { id: 'Citi|2630', name: 'AAdvantage', provider_name: 'Citi' }
+    ])
+
+    const txs = db.prepare('SELECT id, account_id FROM transactions ORDER BY id').all()
+    expect(txs).toEqual([
+      { id: 'tx-ally', account_id: 'Ally|7133' },
+      { id: 'tx-citi', account_id: 'Citi|2630' }
+    ])
+
+    expect(db.prepare("SELECT COUNT(*) as n FROM accounts WHERE id = ''").get()).toEqual({ n: 0 })
+  })
+
+  it('is idempotent — second run reports zero', () => {
+    seedBrokenTx('tx1', { name: 'X', providerName: 'Citi', accountTypeAndNumberDisplay: 'Credit (..2630)' })
+    const first = backfillAccountIds(db)
+    expect(first.txsUpdated).toBe(1)
+    const second = backfillAccountIds(db)
+    expect(second).toEqual({ txsUpdated: 0, accountsCreated: 0 })
+  })
+
+  it('groups display drift ("Credit" vs "Credit Card") under one account', () => {
+    seedBrokenTx('tx1', { name: 'AAdvantage', providerName: 'Citi', accountTypeAndNumberDisplay: 'Credit (..2630)' })
+    seedBrokenTx('tx2', { name: 'AAdvantage', providerName: 'Citi', accountTypeAndNumberDisplay: 'Credit Card (..2630)' })
+
+    backfillAccountIds(db)
+    const accounts = db.prepare('SELECT COUNT(*) as n FROM accounts').get() as { n: number }
+    expect(accounts.n).toBe(1)
+    const txs = db.prepare('SELECT DISTINCT account_id FROM transactions').all()
+    expect(txs).toEqual([{ account_id: 'Citi|2630' }])
+  })
+
+  it('skips transactions with null raw_json (cannot recover)', () => {
+    upsertAccount(db, { id: '', name: 'unknown' })
+    upsertTransaction(db, {
+      id: 'tx-orphan', date: '2024-02-10', description: 'x', status: 'posted', amount: -1,
+      accountId: '', categoryId: null, merchantId: null, rawJson: null
+    })
+    const result = backfillAccountIds(db)
+    expect(result).toEqual({ txsUpdated: 0, accountsCreated: 0 })
+  })
+
+  it('skips transactions with unparseable raw_json', () => {
+    upsertAccount(db, { id: '', name: 'unknown' })
+    upsertTransaction(db, {
+      id: 'tx-bad', date: '2024-02-10', description: 'x', status: 'posted', amount: -1,
+      accountId: '', categoryId: null, merchantId: null, rawJson: 'not json{{'
+    })
+    const result = backfillAccountIds(db)
+    expect(result).toEqual({ txsUpdated: 0, accountsCreated: 0 })
+  })
+
+  it('skips raw_json that parses but lacks an account field', () => {
+    upsertAccount(db, { id: '', name: 'unknown' })
+    upsertTransaction(db, {
+      id: 'tx-noaccount', date: '2024-02-10', description: 'x', status: 'posted', amount: -1,
+      accountId: '', categoryId: null, merchantId: null,
+      rawJson: JSON.stringify({ id: 'tx-noaccount' })
+    })
+    expect(backfillAccountIds(db)).toEqual({ txsUpdated: 0, accountsCreated: 0 })
+  })
+
+  it('uses fallback defaults when raw_json.account fields are missing', () => {
+    upsertAccount(db, { id: '', name: 'unknown' })
+    upsertTransaction(db, {
+      id: 'tx-bare', date: '2024-02-10', description: 'x', status: 'posted', amount: -1,
+      accountId: '', categoryId: null, merchantId: null,
+      rawJson: JSON.stringify({ account: {} })
+    })
+    backfillAccountIds(db)
+    const row = db.prepare("SELECT id, name, type, provider_name, display FROM accounts WHERE id = '|'").get() as { id: string, name: string, type: null, provider_name: null, display: null }
+    expect(row).toEqual({ id: '|', name: '', type: null, provider_name: null, display: null })
+  })
+
+  it('rolls back if the rebuild throws mid-transaction', () => {
+    seedBrokenTx('tx1', { name: 'Spending', providerName: 'Ally', accountTypeAndNumberDisplay: 'Bank (..7133)' })
+
+    const realPrepare = db.prepare.bind(db)
+    const spy = vi.spyOn(db, 'prepare').mockImplementation((sql: string) => {
+      if (sql.startsWith('UPDATE transactions SET account_id')) throw new Error('boom')
+      return realPrepare(sql)
+    })
+
+    expect(() => backfillAccountIds(db)).toThrow('boom')
+    spy.mockRestore()
+
+    // Original broken state preserved: empty account row still present, tx still points at ''
+    const acctCount = db.prepare("SELECT COUNT(*) as n FROM accounts WHERE id = ''").get() as { n: number }
+    expect(acctCount.n).toBe(1)
+    const tx = db.prepare('SELECT account_id FROM transactions WHERE id = ?').get('tx1') as { account_id: string }
+    expect(tx.account_id).toBe('')
+  })
+
+  it('leaves transactions with non-empty CK-provided account_id untouched', () => {
+    upsertAccount(db, { id: 'urn:account:real', name: 'real' })
+    upsertTransaction(db, {
+      id: 'tx-real', date: '2024-02-10', description: 'x', status: 'posted', amount: -1,
+      accountId: 'urn:account:real', categoryId: null, merchantId: null,
+      rawJson: JSON.stringify({ account: { id: 'urn:account:real', name: 'real' } })
+    })
+    const result = backfillAccountIds(db)
+    expect(result).toEqual({ txsUpdated: 0, accountsCreated: 0 })
   })
 })

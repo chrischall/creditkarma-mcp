@@ -4,7 +4,7 @@ import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { CreditKarmaClient, isJwtExpired, extractCookieValue } from './client.js'
-import { initDb } from './db.js'
+import { initDb, backfillAccountIds } from './db.js'
 import type { Database } from './db.js'
 
 import { registerAuthTools } from './tools/auth.js'
@@ -65,9 +65,15 @@ async function main() {
     console.error('[creditkarma-mcp] Warning: refresh token in CK_COOKIES has expired. Run `npm run auth` (or call ck_set_session) to capture fresh credentials.')
   }
 
+  const db = initDb(dbPath)
+  const repaired = backfillAccountIds(db)
+  if (repaired.txsUpdated > 0) {
+    console.error(`[creditkarma-mcp] Repaired ${repaired.txsUpdated} transactions across ${repaired.accountsCreated} accounts (CK returned empty account.id for legacy rows).`)
+  }
+
   const ctx: AppContext = {
     client: new CreditKarmaClient(token, refreshToken, cookies),
-    db: initDb(dbPath),
+    db,
     mcpJsonPath
   }
 

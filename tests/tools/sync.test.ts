@@ -186,6 +186,27 @@ describe('ck_sync_transactions', () => {
     expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
   })
 
+  it('synthesizes distinct account_id when CK returns empty ids for multiple accounts', async () => {
+    const ally = makeTx('tx-ally', '2024-02-10', {
+      account: { id: '', name: 'Spending', type: 'BANK', providerName: 'Ally   ', accountTypeAndNumberDisplay: 'Bank (..7133)' }
+    })
+    const citi = makeTx('tx-citi', '2024-02-10', {
+      account: { id: '', name: 'AAdvantage', type: 'CREDIT', providerName: 'Citi', accountTypeAndNumberDisplay: 'Credit (..2630)' }
+    })
+    vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([ally, citi]))
+
+    await handleSyncTransactions({}, ctx)
+
+    const accounts = ctx.db.prepare('SELECT id FROM accounts ORDER BY id').all() as Array<{ id: string }>
+    expect(accounts.map(a => a.id)).toEqual(['Ally|7133', 'Citi|2630'])
+
+    const txs = ctx.db.prepare('SELECT id, account_id FROM transactions ORDER BY id').all() as Array<{ id: string, account_id: string }>
+    expect(txs).toEqual([
+      { id: 'tx-ally', account_id: 'Ally|7133' },
+      { id: 'tx-citi', account_id: 'Citi|2630' }
+    ])
+  })
+
   it('upserts transactions whose category or merchant is null', async () => {
     const tx = makeTx('tx-orphan', '2024-02-10', { category: null, merchant: null })
     vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([tx]))

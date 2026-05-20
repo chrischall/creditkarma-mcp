@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'fs'
 import { dirname } from 'path'
+import { deriveAccountId } from './accountId.js'
 
 export type Database = DatabaseSync
 
@@ -163,4 +164,59 @@ export function getSyncState(db: Database, key: string): string | null {
 export function setSyncState(db: Database, key: string, value: string): void {
   db.prepare('INSERT INTO sync_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
     .run(key, value)
+}
+
+/**
+ * Repair transactions whose `account_id` is `''` (or NULL) by re-deriving the
+ * id from each transaction's `raw_json.account` and rebuilding the accounts
+ * table. Idempotent — returns zero counts if there's nothing to fix.
+ *
+ * Needed because CK's `transactionsHub` historically returned empty
+ * `account.id` strings, collapsing every account into a single row.
+ */
+export function backfillAccountIds(db: Database): { txsUpdated: number, accountsCreated: number } {
+  const rows = db
+    .prepare("SELECT id, raw_json FROM transactions WHERE account_id IS NULL OR account_id = ''")
+    .all() as Array<{ id: string, raw_json: string | null }>
+
+  if (rows.length === 0) return { txsUpdated: 0, accountsCreated: 0 }
+
+  const accounts = new Map<string, AccountRow>()
+  const updates: Array<{ txId: string, accountId: string }> = []
+
+  for (const row of rows) {
+    if (!row.raw_json) continue
+    let parsed: { account?: { id?: string, name?: string, type?: string, providerName?: string, accountTypeAndNumberDisplay?: string } }
+    try {
+      parsed = JSON.parse(row.raw_json)
+    } catch {
+      continue
+    }
+    if (!parsed.account) continue
+    const accountId = deriveAccountId(parsed.account)
+    accounts.set(accountId, {
+      id: accountId,
+      name: parsed.account.name ?? '',
+      type: parsed.account.type ?? null,
+      providerName: parsed.account.providerName ?? null,
+      display: parsed.account.accountTypeAndNumberDisplay ?? null,
+    })
+    updates.push({ txId: row.id, accountId })
+  }
+
+  if (updates.length === 0) return { txsUpdated: 0, accountsCreated: 0 }
+
+  db.exec('BEGIN')
+  try {
+    for (const acct of accounts.values()) upsertAccount(db, acct)
+    const stmt = db.prepare('UPDATE transactions SET account_id = ? WHERE id = ?')
+    for (const u of updates) stmt.run(u.accountId, u.txId)
+    db.prepare("DELETE FROM accounts WHERE id = ''").run()
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+
+  return { txsUpdated: updates.length, accountsCreated: accounts.size }
 }

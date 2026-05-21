@@ -56,28 +56,29 @@ Then add to `.mcp.json`:
 
 Or use a `.env` file in the project directory with `CK_COOKIES=<value>`.
 
-### Getting CK_COOKIES
+### Getting CK_COOKIES (optional)
 
-**Scripted (recommended — source install):**
-```bash
-npm run auth               # prints the Cookie header to the console
-npm run auth -- .env       # writes CK_COOKIES=<header> to .env
-```
+Three onboarding paths, in priority order:
 
-Launches Chrome with a dedicated profile, waits for sign-in at creditkarma.com, then captures the full session Cookie header (CKAT carries the access + refresh JWTs; CKTRKID and friends are needed by the refresh endpoint). Use the printed value with Claude Desktop / MCPB, or the `.env` form when running from source.
+**1. fetchproxy extension (easiest — no env vars):** Install the [fetchproxy 0.3.0 extension](https://github.com/chrischall/fetchproxy), sign into creditkarma.com once, and leave `CK_COOKIES` **unset**. The MCP reads HttpOnly `CKAT` + `CKTRKID` cookies on the first tool call via `chrome.cookies.get`, then operates direct-to-API from Node.
 
-**Manual (DevTools):**
+**2. ck_set_session MCP tool:** From within Claude, call `ck_set_session` with a Cookie header you copied from DevTools (see below). The tool persists it to `.env`.
+
+**3. Manual (DevTools):**
 1. Log in to [creditkarma.com](https://www.creditkarma.com) in Chrome
 2. DevTools → **Network** → any creditkarma.com request → **Request Headers**
 3. Right-click the `cookie` header → **Copy value**
+4. Paste into `CK_COOKIES` in your Claude config
 
 ## Authentication
 
-Call `ck_set_session` with your Cookie header to store credentials and enable auto-refresh.
+The MCP handles auth automatically once any of the three paths is configured.
 
 - Access token: ~15 min TTL, auto-refreshed transparently
 - Refresh token: ~8 hours TTL
-- When expired: re-run `npm run auth` (or grab a fresh Cookie header) and call `ck_set_session`
+- When expired:
+  - **fetchproxy path:** sign back into creditkarma.com — the MCP reads fresh cookies on the next tool call
+  - **env-var / ck_set_session path:** grab a fresh Cookie header from DevTools and update `CK_COOKIES` (or call `ck_set_session` again)
 
 ## Tools
 
@@ -104,8 +105,8 @@ Call `ck_set_session` with your Cookie header to store credentials and enable au
 ## Workflows
 
 **First-time setup:**
-1. Run `npm run auth` (or grab the Cookie header manually from a creditkarma.com request in DevTools)
-2. Paste into `CK_COOKIES` env var, or call `ck_set_session(cookies)` from within Claude
+1. Easiest: install the [fetchproxy extension](https://github.com/chrischall/fetchproxy), sign into creditkarma.com, leave `CK_COOKIES` unset.
+2. Or: copy the Cookie header from DevTools and either set `CK_COOKIES` in your config or call `ck_set_session(cookies)` from within Claude.
 3. `ck_sync_transactions` → initial full sync
 
 **Regular use:**

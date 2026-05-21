@@ -21,7 +21,7 @@ Ask Claude things like:
 - [Claude Desktop](https://claude.ai/download) or [Claude Code](https://claude.ai/code)
 - [Node.js](https://nodejs.org) 18 or later
 - A Credit Karma account
-- [Google Chrome](https://www.google.com/chrome/) — used once for the scripted auth flow (optional; you can copy the cookie manually instead)
+- For the no-env-var path: the [fetchproxy 0.3.0 Chrome / Safari extension](https://github.com/chrischall/fetchproxy)
 
 ## Installation
 
@@ -80,38 +80,31 @@ Fully quit and relaunch. Then ask: *"Sync my Credit Karma transactions"*.
 
 Credit Karma uses short-lived JWTs. This server handles automatic token refresh — you only need to set up credentials once (or when your session expires).
 
-### Getting your credentials
+`creditkarma-mcp` tries three auth paths in priority order; whichever succeeds first is used. Existing setups keep working unchanged.
 
-#### Option A — scripted (recommended)
+1. **`CK_COOKIES` env var (legacy).** Set the full Cookie header in your Claude Desktop config or `.env`. This is the path shown in the config above.
+2. **Cached session from `ck_set_session`.** Once called, the tool persists the Cookie header to `.env` as `CK_COOKIES` — so subsequent runs collapse into path 1.
+3. **fetchproxy fallback (no env vars needed — easiest onboarding).** When neither is configured, the server reads `CKAT` + `CKTRKID` cookies once at startup from your already-signed-in `creditkarma.com` tab via the [fetchproxy](https://github.com/chrischall/fetchproxy) browser extension. After that one read, all CK API calls go directly from Node — the extension is **not** in the request hot path. Install the fetchproxy extension (Chrome Web Store / Safari `.dmg`), sign into [creditkarma.com](https://www.creditkarma.com), and the MCP just works.
 
-```bash
-npm run auth               # prints the Cookie header to the console
-npm run auth -- .env       # writes CK_COOKIES=<header> to .env
-```
+Set `CK_DISABLE_FETCHPROXY=1` to opt out of the fallback (turns missing credentials into a hard error — useful in headless CI).
 
-Launches Chrome with a dedicated profile at `~/.creditkarma-mcp/chrome-profile`, waits for you to sign in at creditkarma.com, then captures the full session Cookie header (CKAT carries the access + refresh JWTs; CKTRKID and friends are needed by the refresh endpoint). Either prints it (for pasting into Claude Desktop / MCPB) or writes it to the env file you pass at mode 0600 (owner-only). Requires Google Chrome installed locally; on first run the script installs `puppeteer-core`, `puppeteer-extra`, and `puppeteer-extra-plugin-stealth` (a few MB, not added to `package.json`).
+### Getting your credentials (env-var path)
 
-#### Option B — manual paste (secure prompt)
+#### Option A — fetchproxy extension (recommended)
 
-```bash
-npm run auth -- --manual           # prompts for the cookie, prints CK_COOKIES
-npm run auth -- --manual .env      # prompts for the cookie, writes to .env
-```
+1. Install the [fetchproxy 0.3.0 extension](https://github.com/chrischall/fetchproxy) (Chrome Web Store or Safari `.dmg`).
+2. Sign into [creditkarma.com](https://www.creditkarma.com) in that browser.
+3. Leave `CK_COOKIES` **unset** in your Claude config.
 
-Use this if the scripted flow hits Intuit/Akamai bot detection (sign-in returns "A technical issue has unexpectedly occurred"). Grab the Cookie header from your normal Chrome (Option C below), then paste it at the prompt. Input is **not echoed** — paste, press Enter.
+The MCP reads the HttpOnly `CKAT` + `CKTRKID` cookies via `chrome.cookies.get` on the first tool call, then operates direct-to-API from Node. To re-auth (e.g. after Credit Karma signs you out), just sign back in to creditkarma.com.
 
-#### Option C — manual (DevTools)
+#### Option B — manual (DevTools)
 
 1. Log in to [creditkarma.com](https://www.creditkarma.com) in Chrome
 2. Open DevTools → **Network** → click any request to creditkarma.com → **Request Headers**
 3. Right-click the `cookie` header → **Copy value**
 
-### Setting credentials
-
-Either of these works:
-
-- Paste the value from `npm run auth` into `CK_COOKIES` in your `.env` or Claude config
-- Or call `ck_set_session` from within Claude with the Cookie header value
+Then either paste into `CK_COOKIES` in your Claude config / `.env`, or call `ck_set_session` from within Claude with the Cookie header value.
 
 The server extracts the access and refresh JWTs from the `CKAT` cookie inside the header and refreshes the access token automatically as needed.
 
@@ -119,7 +112,9 @@ The server extracts the access and refresh JWTs from the `CKAT` cookie inside th
 
 - **Access token**: ~15 minutes (auto-refreshed transparently)
 - **Refresh token**: ~8 hours
-- When the refresh token expires, re-run `npm run auth` (or grab a fresh Cookie header from DevTools) and either update `CK_COOKIES` or call `ck_set_session`
+- When the refresh token expires:
+  - **fetchproxy path:** sign back into creditkarma.com — the MCP re-reads fresh cookies on the next tool call.
+  - **env-var path:** grab a fresh Cookie header from DevTools and update `CK_COOKIES` (or call `ck_set_session`).
 
 ## Available tools
 
@@ -156,14 +151,19 @@ sync_state   (key, value)
 
 | Env var | Description | Default |
 |---------|-------------|---------|
-| `CK_COOKIES` | Full Cookie header from a signed-in creditkarma.com request | *(required)* |
+| `CK_COOKIES` | Full Cookie header from a signed-in creditkarma.com request | *(unset — falls back to fetchproxy)* |
+| `CK_DISABLE_FETCHPROXY` | Set to `1` to skip the fetchproxy fallback (headless / CI) | *(unset)* |
 | `CK_DB_PATH` | Path to SQLite database file | `~/.creditkarma-mcp/transactions.db` |
 
 ## Troubleshooting
 
-**"TOKEN_EXPIRED"** — your refresh token has expired. Re-run `npm run auth` (or grab a fresh Cookie header) and update `CK_COOKIES` or call `ck_set_session`.
+**"CK auth: set CK_COOKIES, or call the ck_set_session MCP tool, or install the fetchproxy extension…"** — neither auth path is configured. Either fill in `CK_COOKIES` in your Claude config, or install the [fetchproxy extension](https://github.com/chrischall/fetchproxy) and sign into `creditkarma.com` in your browser.
 
-**Sync returns 0 transactions** — check that your `CK_COOKIES` value is fresh. The refresh token inside the CKAT cookie expires after ~8 hours.
+**"TOKEN_EXPIRED"** — your refresh token has expired. Sign back into creditkarma.com (fetchproxy path) or grab a fresh Cookie header from DevTools and update `CK_COOKIES` / call `ck_set_session`.
+
+**"fetchproxy fallback failed"** — the env-var path wasn't configured and the extension couldn't be reached. Confirm the fetchproxy extension is installed, signed into Credit Karma, and that it's running (open the extension popup). To disable the fallback, set `CK_DISABLE_FETCHPROXY=1`.
+
+**Sync returns 0 transactions** — check that your auth is fresh. The refresh token inside the CKAT cookie expires after ~8 hours.
 
 **Tools not appearing** — fully quit and relaunch Claude Desktop. In Claude Code, run `/mcp` to check server status.
 
@@ -171,9 +171,10 @@ sync_state   (key, value)
 
 ## Security
 
-- Credentials are stored only in your local `.env` file (gitignored) or Claude config
-- `.env` is written at mode 0600 (owner read/write only) by both `npm run auth` and `ck_set_session`
+- Credentials are stored only in your local `.env` file (gitignored), Claude config, or your browser's cookie jar (fetchproxy path)
+- `.env` is written at mode 0600 (owner read/write only) by `ck_set_session`
 - `ck_set_session` refuses to save a refresh token whose JWT `exp` is already in the past — prevents stale credentials from polluting `.env`
+- The fetchproxy path doesn't persist anything to disk — cookies are read into memory once per MCP run, directly from the user's browser via `chrome.cookies.get`
 - The server never logs credentials; warnings go to stderr only (stdout is reserved for the MCP JSON-RPC stream)
 - Only `SELECT` queries are permitted via `ck_query_sql` — no writes to Credit Karma; the underlying `node:sqlite` `prepare()` also rejects multi-statement input
 
@@ -196,6 +197,7 @@ Changes land via PR, including for solo work — release notes are generated fro
 
 ```
 src/
+  auth.ts               resolveAuth() — three-path priority (CK_COOKIES env / ck_set_session cache / fetchproxy), plus loadAuthIntoClient()
   client.ts             Credit Karma GraphQL client (auto-refresh, JWT helpers, cookie parser)
   index.ts              MCP server entry point; bootstraps tokens from CK_COOKIES
   db.ts                 SQLite schema, migrations, and upsert helpers
@@ -207,13 +209,11 @@ src/
                         ck_get_spending_by_category, ck_get_spending_by_merchant,
                         ck_get_account_summary
     sql.ts              ck_query_sql — SELECT-only escape hatch
-scripts/
-  setup-auth.mjs        npm run auth — Puppeteer flow + manual paste fallback
 tests/
   helpers.ts            Shared test helpers (fakeServer, makeJwt)
+  auth.test.ts          resolveAuth + loadAuthIntoClient (mocks @fetchproxy/bootstrap)
   client.test.ts
   db.test.ts
-  setup-auth.test.ts
   tools/
     auth.test.ts
     sync.test.ts

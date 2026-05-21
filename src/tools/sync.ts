@@ -6,6 +6,7 @@ import {
   getSyncState, setSyncState
 } from '../db.js'
 import { deriveAccountId } from '../accountId.js'
+import { loadAuthIntoClient } from '../auth.js'
 
 export interface SyncArgs {
   force_full?: boolean
@@ -114,9 +115,19 @@ export async function handleSyncTransactions(
 }
 
 async function refreshOrThrow(ctx: AppContext): Promise<void> {
+  // No cached refresh token → either CK_COOKIES wasn't set at startup AND
+  // ck_set_session was never called, OR the user is on the fetchproxy path
+  // and we need to lift the session out of the browser. Either way, defer
+  // to loadAuthIntoClient() — it picks env-var (fast, no network) or
+  // fetchproxy (one-shot WS bridge) and applies the result to the client.
+  //
+  // Any throw from there is already shaped as a TOKEN_EXPIRED-style
+  // actionable message ("CK auth: set CK_COOKIES, ...") so we let it bubble.
   if (!ctx.client.getRefreshToken()) {
-    throw new Error('TOKEN_EXPIRED: No valid token. Run `npm run auth` to capture a fresh Cookie header via browser login, or call ck_set_session with the Cookie header from a signed-in creditkarma.com request.')
+    await loadAuthIntoClient(ctx.client)
   }
+  // We may have just loaded a token via fetchproxy (in which case the access
+  // JWT inside CKAT could already be ~15-min stale) — refresh once to be sure.
   await ctx.client.refreshAccessToken()
 }
 

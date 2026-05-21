@@ -22,11 +22,18 @@ const makePage = (txs: ReturnType<typeof makeTx>[], hasNextPage = false, endCurs
 
 describe('ck_sync_transactions', () => {
   let ctx: AppContext
+  let originalDisable: string | undefined
 
   beforeEach(() => {
     // Set fake time BEFORE creating client so tokenSetAt reflects the fake clock
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2024-02-15'))
+    // Disable fetchproxy fallback in this suite: tests that drive the
+    // "no token + no refresh" path want the old "fail loudly" behavior so
+    // they can assert on TOKEN_EXPIRED. Tests that need the fallback live
+    // in tests/auth.test.ts and mock @fetchproxy/bootstrap directly.
+    originalDisable = process.env.CK_DISABLE_FETCHPROXY
+    process.env.CK_DISABLE_FETCHPROXY = '1'
     ctx = {
       client: new CreditKarmaClient('valid-token'),
       db: initDb(':memory:'),
@@ -37,6 +44,8 @@ describe('ck_sync_transactions', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
+    if (originalDisable === undefined) delete process.env.CK_DISABLE_FETCHPROXY
+    else process.env.CK_DISABLE_FETCHPROXY = originalDisable
   })
 
   it('fetches all pages and upserts transactions', async () => {
@@ -113,7 +122,9 @@ describe('ck_sync_transactions', () => {
       .mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')], true, 'cursor-checkpoint'))
       .mockRejectedValueOnce(new Error('TOKEN_EXPIRED'))
 
-    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow('TOKEN_EXPIRED')
+    // No refresh token on the client + fetchproxy disabled → refreshOrThrow
+    // surfaces the actionable "CK auth: set CK_COOKIES, ..." message.
+    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow(/CK auth/)
     expect(getSyncState(ctx.db, 'last_cursor')).toBe('cursor-checkpoint')
   })
 
@@ -149,12 +160,13 @@ describe('ck_sync_transactions', () => {
 
   it('throws with instructions if token expired and no refresh token', async () => {
     ctx.client = new CreditKarmaClient()  // no token, no refresh token
-    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow('TOKEN_EXPIRED')
+    // Surfaces the actionable "set CK_COOKIES / call ck_set_session / install fetchproxy" message.
+    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow(/CK auth/)
   })
 
   it('does not save last_cursor when first page fetch fails', async () => {
     vi.spyOn(ctx.client, 'fetchPage').mockRejectedValueOnce(new Error('TOKEN_EXPIRED'))
-    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow('TOKEN_EXPIRED')
+    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow(/CK auth/)
     expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
   })
 

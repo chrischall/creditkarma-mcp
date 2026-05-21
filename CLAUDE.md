@@ -25,6 +25,7 @@ All tools are prefixed `ck_` (e.g. `ck_sync_transactions`, `ck_list_transactions
 ```
 src/
   index.ts              # MCP server entry point — registers all tools, starts stdio transport
+  auth.ts               # resolveAuth() + loadAuthIntoClient() — Pattern A three-path priority
   client.ts             # Credit Karma GraphQL client with auto-refresh
   db.ts                 # SQLite schema and upsert helpers (incl. backfillAccountIds)
   accountId.ts          # Synthesize a stable account id from provider + last-4 (CK returns empty ids)
@@ -40,11 +41,26 @@ src/
 
 Each tool file exports tool definitions (MCP schemas) and a handler. `index.ts` aggregates all tools and routes by name.
 
+## Auth resolution (Pattern A template)
+
+`src/auth.ts` is the canonical "browser-bootstrap + Node-direct" auth shape shared with ofw-mcp, resy-mcp, opentable-mcp, signupgenius-mcp, zola-mcp, … Sibling MCPs follow the same selector — keep it flat, the path-selection explicit, and the error messages actionable.
+
+Three paths in priority order:
+
+1. **`CK_COOKIES` env var** — full Cookie header. Caller parses the embedded `CKAT=<accessJWT>%3B<refreshJWT>` to extract both JWTs. Unchanged from pre-fetchproxy behavior.
+2. **Cached session via `ck_set_session`** — that tool persists to `.env` as `CK_COOKIES`, so subsequent runs collapse into path 1. Stays for power users who want to paste a cookie header rather than install the extension.
+3. **fetchproxy fallback** — `@fetchproxy/bootstrap` (0.3.0+) spins up a one-shot WebSocket bridge to the fetchproxy extension and reads the HttpOnly `CKAT` + `CKTRKID` cookies on creditkarma.com via `chrome.cookies.get`. Returns once. Subsequent CK API calls (GraphQL + `/member/oauth2/refresh`) go direct from Node — fetchproxy is NOT in the hot path.
+
+`CK_DISABLE_FETCHPROXY=1` opts out of path 3 (turns missing creds into a hard error — useful in headless CI).
+
+`loadAuthIntoClient(client)` is the lazy bootstrap helper used by tool handlers (currently just `sync.ts → refreshOrThrow`): when the client has no refresh token, it calls `resolveAuth()` and applies the result. `@fetchproxy/bootstrap` is mocked at the module boundary in `tests/auth.test.ts`.
+
 ## Environment
 
 ```
-CK_COOKIES=<value>    # Full Cookie header from a signed-in creditkarma.com request. The runtime parser also accepts a bare CKAT value or `CKAT=<value>` for legacy callers, but `npm run auth` always writes the full header and the refresh endpoint needs CKTRKID alongside CKAT. Capture via `npm run auth -- .env` or `ck_set_session` at runtime.
-CK_DB_PATH=<path>     # Path to SQLite database. Default: ~/.creditkarma-mcp/transactions.db
+CK_COOKIES=<value>          # Optional. Full Cookie header from a signed-in creditkarma.com request. The runtime parser also accepts a bare CKAT value or `CKAT=<value>` for legacy callers. Capture via `ck_set_session` or just install the fetchproxy extension and skip this.
+CK_DISABLE_FETCHPROXY=1|true # Optional. Skip the fetchproxy browser-extension fallback (missing creds become a hard error — useful in headless CI).
+CK_DB_PATH=<path>           # Path to SQLite database. Default: ~/.creditkarma-mcp/transactions.db
 ```
 
 ## Testing
@@ -112,7 +128,7 @@ Main is always one version ahead of the latest tag. To release, run the **Tag & 
 ## Gotchas
 
 - **ESM + NodeNext**: imports must use `.js` extensions even for `.ts` source files (e.g. `import { db } from './db.js'`).
-- **CKAT auto-refresh**: access token (~15 min, `TOKEN_TTL_MS` in `src/client.ts`) is refreshed automatically using the refresh token (~8 hours). When the refresh token is expired, the server logs a startup warning and `ck_set_session` will refuse to save the stale credentials — re-run `npm run auth` for a fresh Cookie header.
+- **CKAT auto-refresh**: access token (~15 min, `TOKEN_TTL_MS` in `src/client.ts`) is refreshed automatically using the refresh token (~8 hours). When the refresh token is expired, the server logs a startup warning and `ck_set_session` refuses to save stale credentials — sign back into creditkarma.com (fetchproxy path) or paste a fresh Cookie header.
 - **Sync strategy**: incremental by default — fetches since last sync date with a 30-day overlap. Use `force_full: true` to re-fetch everything.
 - **Resume on failure**: `ck_sync_transactions` saves `last_cursor` to `sync_state` if a page fetch fails, so the next sync resumes from the same cursor. The cursor is cleared on success.
 - **Read-only SQL**: `ck_query_sql` only permits SELECT — no writes. Validation is comment-stripped before the SELECT regex check; `node:sqlite`'s `prepare()` itself rejects multi-statement input.
@@ -121,6 +137,6 @@ Main is always one version ahead of the latest tag. To release, run the **Tag & 
 - **GraphQL quirk**: transactions are fetched via Credit Karma's internal GraphQL API, not a public API. The query is in `src/transaction.graphql` and must be copied to `dist/` at build time (`npm run build` handles this; `tsc` alone does not).
 - **Build before run**: `dist/` must exist before running the server manually. `npm run build` runs `tsc` + copies `transaction.graphql` + bundles via esbuild into `dist/bundle.js` (the MCPB/manifest entry point).
 - **stdio transport**: the server logs warnings to **stderr** only — stdout is reserved for JSON-RPC. `dotenv` is loaded with `quiet: true` for the same reason.
-- **Persisted credentials**: `persistSession()` writes `.env` at mode 0600. Anything else handling secrets in this repo should match (e.g. `scripts/setup-auth.mjs` `writeEnvVar`).
+- **Persisted credentials**: `persistSession()` (in `src/tools/auth.ts`) writes `.env` at mode 0600. Anything else handling secrets in this repo should match. The fetchproxy path doesn't persist anything — cookies are read into memory once per MCP run.
 - **Coverage**: `vitest.config.ts` enforces 100% line/branch/function/statement coverage on `src/**` (excluding `src/index.ts`). Failing coverage fails CI.
 - **Plugin files**: `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` are for Claude Code plugin distribution — not part of the MCP runtime.

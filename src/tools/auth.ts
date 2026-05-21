@@ -26,7 +26,7 @@ export async function handleSetSession(args: SetSessionArgs, ctx: AppContext): P
   // Refuse if the refresh JWT is already expired — saving stale credentials
   // pollutes .env and produces confusing HTTP 400s from the refresh endpoint.
   if (refreshToken && isJwtExpired(refreshToken)) {
-    return 'Session not saved: refresh token has already expired. Run `npm run auth` to capture fresh credentials via browser login.'
+    return 'Session not saved: refresh token has already expired. Sign back into creditkarma.com — with the fetchproxy extension installed the MCP will read fresh cookies automatically, or copy a fresh Cookie header from DevTools.'
   }
 
   ctx.client.setToken(accessToken)
@@ -79,7 +79,7 @@ export function registerAuthTools(server: McpServer, ctx: AppContext): void {
   server.registerTool(
     'ck_set_session',
     {
-      description: 'Store a Credit Karma session to enable automatic token refresh. Pass the full Cookie header from a signed-in creditkarma.com request (Chrome DevTools \u2192 Network \u2192 any creditkarma.com request \u2192 Request Headers \u2192 right-click the `cookie` header \u2192 Copy value). Capture via `npm run auth` from the creditkarma-mcp repo.',
+      description: 'Store a Credit Karma session to enable automatic token refresh. Pass the full Cookie header from a signed-in creditkarma.com request (Chrome DevTools \u2192 Network \u2192 any creditkarma.com request \u2192 Request Headers \u2192 right-click the `cookie` header \u2192 Copy value). For most users the easier onboarding path is to install the fetchproxy extension and sign into creditkarma.com \u2014 the MCP reads the cookies automatically.',
       annotations: { readOnlyHint: false },
       inputSchema: {
         cookies: z.string().describe('Full Cookie header from a signed-in creditkarma.com request (contains CKAT, CKTRKID, etc.)'),

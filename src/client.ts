@@ -141,7 +141,7 @@ export class CreditKarmaClient {
       const contentType = res.headers.get('content-type') ?? ''
       const looksHtml = !contentType.includes('json') && /^\s*<(!doctype|html)/i.test(body)
       const detail = looksHtml
-        ? '(non-JSON error page — refresh token likely expired or session invalid; re-run `npm run auth`)'
+        ? '(non-JSON error page — refresh token likely expired or session invalid; sign back into creditkarma.com so the fetchproxy extension can re-read fresh cookies, or paste a fresh Cookie header via ck_set_session)'
         : (body.length > 200 ? body.slice(0, 200) + '…' : body || '(empty body)')
       throw new Error(`Token refresh failed: HTTP ${res.status} — ${detail}`)
     }

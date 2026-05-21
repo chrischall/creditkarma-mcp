@@ -42,7 +42,7 @@
     "ck_cookies": {
       "type": "string",
       "title": "Credit Karma Cookie Header",
-      "description": "The Cookie header from a signed-in creditkarma.com request. Run `npm run auth` from the repo to capture via browser login, or grab it from DevTools → Network → any creditkarma.com request → Request Headers.",
+      "description": "Optional. Leave blank to use the fetchproxy 0.3.0 extension fallback — sign into creditkarma.com in the browser and the MCP will read the cookies automatically. Otherwise paste the full Cookie header from a signed-in creditkarma.com request (DevTools → Network → any creditkarma.com request → Request Headers).",
       "required": false,
       "sensitive": true
     },

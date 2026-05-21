@@ -62,7 +62,7 @@ async function main() {
 
 
   if (refreshToken && isJwtExpired(refreshToken)) {
-    console.error('[creditkarma-mcp] Warning: refresh token in CK_COOKIES has expired. Run `npm run auth` (or call ck_set_session) to capture fresh credentials.')
+    console.error('[creditkarma-mcp] Warning: refresh token in CK_COOKIES has expired. Sign back into creditkarma.com (with the fetchproxy extension installed) or call ck_set_session with a fresh Cookie header.')
   }
 
   const db = initDb(dbPath)

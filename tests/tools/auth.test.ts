@@ -85,7 +85,7 @@ describe('ck_set_session', () => {
     const result = await handleSetSession({ cookies }, ctx)
 
     expect(result).toMatch(/expired/i)
-    expect(result).toMatch(/npm run auth/)
+    expect(result).toMatch(/fetchproxy|DevTools/)
     expect(ctx.client.getToken()).toBeNull()
     expect(ctx.client.getRefreshToken()).toBeNull()
     expect(existsSync(join(tmpDir, '.env'))).toBe(false)

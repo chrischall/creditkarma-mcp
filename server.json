@@ -18,10 +18,16 @@
       "environmentVariables": [
         {
           "name": "CK_COOKIES",
-          "description": "The Cookie header from a signed-in creditkarma.com request. Run `npm run auth` to capture via browser login, or copy from DevTools → Network → any creditkarma.com request → Request Headers.",
+          "description": "Optional. The full Cookie header from a signed-in creditkarma.com request. Leave unset to use the fetchproxy extension fallback — install fetchproxy 0.3.0, sign into creditkarma.com, and the MCP reads cookies automatically. Otherwise copy the header from DevTools → Network → any creditkarma.com request → Request Headers.",
           "isRequired": false,
           "format": "string",
           "isSecret": true
+        },
+        {
+          "name": "CK_DISABLE_FETCHPROXY",
+          "description": "Set to 1 to skip the fetchproxy browser-extension fallback (missing creds become a hard error — useful in headless CI).",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

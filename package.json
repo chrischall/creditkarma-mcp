@@ -1,8 +1,8 @@
 {
   "name": "creditkarma-mcp",
-  "version": "2.0.10",
+  "version": "2.0.11",
   "mcpName": "io.github.chrischall/creditkarma-mcp",
-  "description": "MCP server for Credit Karma \u2014 natural-language access to your transactions, spending, and accounts",
+  "description": "MCP server for Credit Karma — natural-language access to your transactions, spending, and accounts",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
   "repository": {
     "type": "git",

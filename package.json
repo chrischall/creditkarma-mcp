@@ -44,7 +44,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@fetchproxy/bootstrap": "^0.3.0",
+    "@fetchproxy/bootstrap": "^0.4.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.4.0",
     "zod": "^4.3.6"

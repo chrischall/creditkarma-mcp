@@ -23,6 +23,28 @@ Ask Claude things like:
 - A Credit Karma account
 - For the no-env-var path: the [fetchproxy 0.3.0 Chrome / Safari extension](https://github.com/chrischall/fetchproxy)
 
+## Acknowledgement of Terms
+
+By using this MCP server, you acknowledge and agree to the following:
+
+**1. This server accesses your own Credit Karma account.** Every request is dispatched through your own signed-in browser tab via the fetchproxy extension. **You** are the one logged in. It does not — and cannot — access anyone else's account.
+
+**2. [Credit Karma's Terms](https://www.creditkarma.com/about/terms) govern your use of this server**, just as they govern your direct use of creditkarma.com. The clauses most relevant here:
+
+> You must not sell, transfer, or assign your account to anyone else… you may not allow anyone else to log into our Services as you.
+
+CK does contemplate third-party data retrieval at the user's direction (Section 3.7). There is no explicit anti-scraping clause in the membership agreement; Section 4.1 restricts copying or distributing CK content without express prior written consent.
+
+You are agreeing to those terms — read by the maintainer 2026-05-23 — every time you invoke a tool in this server. Critically: this server runs **as you**, not as a third party logging in on your behalf. You direct the tool.
+
+**3. Personal, non-commercial use only.** This project is not affiliated with, endorsed by, sponsored by, or in partnership with Intuit, Credit Karma, or any financial institution. It is a personal automation tool that reads your transaction history, spending categories, and account snapshots — the same data Credit Karma already shows you in their app. Do not use it on someone else's account, do not redistribute their content, and do not use it to make trading or lending decisions on behalf of others.
+
+**4. This server may break.** Credit Karma rotates its internal endpoints; what works today may 404 tomorrow. This is the nature of unofficial integrations.
+
+**5. You accept full responsibility** for any consequences of using this server in connection with your Credit Karma account — rate limiting, account warnings, suspension, or any enforcement action Intuit takes. If Credit Karma objects to your use, stop using this server. **Do not commit your `.env` to git** — your CK session/auth artifacts are credentials, and the Membership Agreement holds you responsible for their confidentiality.
+
+This section is the maintainer's good-faith summary of the terms — it is not legal advice and does not modify or supersede Credit Karma's actual Membership Agreement.
+
 ## Installation
 
 ### 1. Clone and build

@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.1.1](https://github.com/chrischall/creditkarma-mcp/compare/v2.1.0...v2.1.1) (2026-05-24)
+
+
+### Documentation
+
+* add Acknowledgement of Terms section to README ([#26](https://github.com/chrischall/creditkarma-mcp/issues/26)) ([bef799f](https://github.com/chrischall/creditkarma-mcp/commit/bef799f97d6d9b27fcb904c712cf4f5e75d328dc))
+* canonical auto-merge guidance ([#29](https://github.com/chrischall/creditkarma-mcp/issues/29)) ([811a23e](https://github.com/chrischall/creditkarma-mcp/commit/811a23e18bb592108319a3f402e94513edd77a7b))
+* **claude-md:** call out 100-char limit on server.json description ([5b56a04](https://github.com/chrischall/creditkarma-mcp/commit/5b56a048e5474eb719c90b436e63a69e6d330ab7))
+* **claude-md:** call out 100-char limit on server.json description ([a5d9d49](https://github.com/chrischall/creditkarma-mcp/commit/a5d9d49a67749fcf8991fbe300822e7b0942afbd))
+* correct release-please PR handling in merge guidance ([#30](https://github.com/chrischall/creditkarma-mcp/issues/30)) ([e4f178b](https://github.com/chrischall/creditkarma-mcp/commit/e4f178bb3aa61f0f5000e099c1aa4539d971de46))
+
 ## [2.1.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.0.11...v2.1.0) (2026-05-22)
 
 

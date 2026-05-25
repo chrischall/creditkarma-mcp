@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.2](https://github.com/chrischall/creditkarma-mcp/compare/v2.1.1...v2.1.2) (2026-05-25)
+
+
+### Bug Fixes
+
+* **ci:** prevent labeled event from cancelling auto-review ([#32](https://github.com/chrischall/creditkarma-mcp/issues/32)) ([9c33a33](https://github.com/chrischall/creditkarma-mcp/commit/9c33a336bd0329809d1f27ce9f9dd422ed28598c))
+
 ## [2.1.1](https://github.com/chrischall/creditkarma-mcp/compare/v2.1.0...v2.1.1) (2026-05-24)
 
 

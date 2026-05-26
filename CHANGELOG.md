@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.4](https://github.com/chrischall/creditkarma-mcp/compare/v2.1.3...v2.1.4) (2026-05-26)
+
+
+### Bug Fixes
+
+* **ci:** substitute repo name in publish workflow ([#37](https://github.com/chrischall/creditkarma-mcp/issues/37)) ([7fe3c7a](https://github.com/chrischall/creditkarma-mcp/commit/7fe3c7ad4d5b30f1c165cebbe6caf13c3d96d035))
+
 ## [2.1.3](https://github.com/chrischall/creditkarma-mcp/compare/v2.1.2...v2.1.3) (2026-05-26)
 
 

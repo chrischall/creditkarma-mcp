@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.3](https://github.com/chrischall/creditkarma-mcp/compare/v2.1.2...v2.1.3) (2026-05-26)
+
+
+### Documentation
+
+* **claude:** warn against early PRs and call out first-party dep bumps ([#35](https://github.com/chrischall/creditkarma-mcp/issues/35)) ([f08d2e2](https://github.com/chrischall/creditkarma-mcp/commit/f08d2e26b64e21a60986b32e602325947483e930))
+
 ## [2.1.2](https://github.com/chrischall/creditkarma-mcp/compare/v2.1.1...v2.1.2) (2026-05-25)
 
 

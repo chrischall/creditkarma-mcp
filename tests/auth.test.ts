@@ -150,6 +150,24 @@ describe('resolveAuth', () => {
         /fetchproxy fallback failed: plain string failure/
       )
     })
+
+    it('surfaces FetchproxyBridgeDownError.hint verbatim when the SW retry exhausts', async () => {
+      // 0.8.0+: bootstrap propagates FetchproxyBridgeDownError when the
+      // server's lazy-revive retry also fails. We surface the typed
+      // `.hint` so users see the actionable "click the extension toolbar
+      // icon" message in path 3, matching the self-service guidance in
+      // path 4.
+      const { FetchproxyBridgeDownError } = await import('@fetchproxy/server')
+      const downErr = new FetchproxyBridgeDownError({
+        originalError: 'content_script_unreachable',
+        retryAttempted: true,
+        op: 'fetch',
+      })
+      bootstrapMock.mockRejectedValue(downErr)
+
+      await expect(resolveAuth()).rejects.toThrow(/fetchproxy bridge is down/)
+      await expect(resolveAuth()).rejects.toThrow(new RegExp(downErr.hint.slice(0, 20)))
+    })
   })
 
   describe('env-var sanitization', () => {

@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.1.4...v2.2.0) (2026-05-28)
+
+
+### Features
+
+* **deps:** adopt @fetchproxy/bootstrap 0.8.0 for SW-eviction-resilient startup capture ([#40](https://github.com/chrischall/creditkarma-mcp/issues/40)) ([321c189](https://github.com/chrischall/creditkarma-mcp/commit/321c189279f8e1afee562915f00e511d343e0360))
+
 ## [2.1.4](https://github.com/chrischall/creditkarma-mcp/compare/v2.1.3...v2.1.4) (2026-05-26)
 
 

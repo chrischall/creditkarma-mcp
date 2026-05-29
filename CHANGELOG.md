@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.0...v2.2.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* **ci:** auto-merge arm guards ([#43](https://github.com/chrischall/creditkarma-mcp/issues/43)) ([31227ed](https://github.com/chrischall/creditkarma-mcp/commit/31227ed8e2c30c887889298fb7848b521b615e37))
+
 ## [2.2.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.1.4...v2.2.0) (2026-05-28)
 
 

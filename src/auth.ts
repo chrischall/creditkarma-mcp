@@ -59,7 +59,7 @@
 //     today.
 
 import { bootstrap } from '@fetchproxy/bootstrap'
-import { classifyBridgeError, FetchproxyBridgeDownError } from '@fetchproxy/server'
+import { classifyBridgeError, FetchproxyBridgeDownError } from '@chrischall/mcp-utils/fetchproxy'
 import { readEnvVar, parseBoolEnv } from '@chrischall/mcp-utils'
 import pkg from '../package.json' with { type: 'json' }
 import { CreditKarmaClient, extractCookieValue } from './client.js'

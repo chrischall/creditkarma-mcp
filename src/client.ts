@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
+import { truncateErrorMessage } from '@chrischall/mcp-utils'
 
 const TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
 export const GRAPHQL_ENDPOINT = 'https://api.creditkarma.com/graphql'
@@ -38,6 +39,8 @@ export class CreditKarmaClient {
   private tokenSetAt: number | null = null
   private refreshToken: string | null = null
   private cookies: string | null = null
+  /** In-flight refresh, shared across concurrent callers (see refreshAccessToken). */
+  private refreshInFlight: Promise<string> | null = null
 
   constructor(token?: string, refreshToken?: string, cookies?: string) {
     if (token) this.setToken(token)
@@ -93,19 +96,34 @@ export class CreditKarmaClient {
         variables: buildVariables(afterCursor)
       })
       if (retry.status === 401) throw new Error('TOKEN_EXPIRED')
-      if (!retry.ok) throw new Error(`HTTP ${retry.status}`)
+      if (!retry.ok) throw new Error(await httpErrorMessage(retry))
       return parseTransactionPage(await retry.json())
     }
 
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    if (!response.ok) throw new Error(await httpErrorMessage(response))
     return parseTransactionPage(await response.json())
   }
 
   /**
    * Refresh the access token using CK's native refresh endpoint.
    * Requires a refresh token and session cookies (captured after login).
+   *
+   * Concurrent callers share a single in-flight request: the first call starts
+   * the refresh and stores its promise; overlapping callers (e.g. a multi-page
+   * sync that 401s on several pages at once) await that same promise instead of
+   * firing duplicate POSTs to /member/oauth2/refresh (wasted quota, rate-limit
+   * risk). The slot is cleared in `finally`, so a later expiry refreshes anew.
    */
-  async refreshAccessToken(): Promise<string> {
+  refreshAccessToken(): Promise<string> {
+    if (this.refreshInFlight) return this.refreshInFlight
+    const p = this.doRefreshAccessToken().finally(() => {
+      this.refreshInFlight = null
+    })
+    this.refreshInFlight = p
+    return p
+  }
+
+  private async doRefreshAccessToken(): Promise<string> {
     if (!this.refreshToken) throw new Error('NO_REFRESH_TOKEN: Call ck_set_session first.')
 
     const headers: Record<string, string> = {
@@ -192,6 +210,18 @@ export function isJwtExpired(token: string): boolean {
   return p.exp * 1000 < Date.now()
 }
 
+/**
+ * Emit the standard stderr warning when a refresh JWT is present but already
+ * expired. Single source of truth for the message that previously lived in
+ * both `src/index.ts` (startup) and was conceptually mirrored in
+ * `ck_set_session`. No-op when the token is absent or still valid.
+ */
+export function warnIfRefreshTokenExpired(refreshToken: string | undefined | null): void {
+  if (refreshToken && isJwtExpired(refreshToken)) {
+    console.error('[creditkarma-mcp] Warning: refresh token in CK_COOKIES has expired. Sign back into creditkarma.com (with the fetchproxy extension installed) or call ck_set_session with a fresh Cookie header.')
+  }
+}
+
 function extractGlidFromJwt(token: string): string | null {
   const p = decodeJwtPayload(token)
   const glid = p?.glid
@@ -236,4 +266,21 @@ function parseTransactionPage(json: unknown): TransactionPage {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * Build an `HTTP <status>: <body>` error message for a failed GraphQL response,
+ * attaching the upstream body (redacted + length-capped via mcp-utils'
+ * `truncateErrorMessage`) so failures are debuggable instead of a bare status.
+ * Falls back to just the status when the body can't be read.
+ */
+async function httpErrorMessage(res: Response): Promise<string> {
+  let body = ''
+  try {
+    body = typeof res.text === 'function' ? await res.text() : ''
+  } catch {
+    body = ''
+  }
+  const safe = truncateErrorMessage(body, 200).trim()
+  return safe.length > 0 ? `HTTP ${res.status}: ${safe}` : `HTTP ${res.status}`
 }

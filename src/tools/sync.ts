@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { textResult } from '@chrischall/mcp-utils'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AppContext } from '../index.js'
 import {
@@ -161,7 +162,7 @@ export function registerSyncTools(server: McpServer, ctx: AppContext): void {
     },
     async (args) => {
       const result = await handleSyncTransactions(args, ctx)
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+      return textResult(result)
     }
   )
 }

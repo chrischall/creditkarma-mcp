@@ -60,6 +60,7 @@
 
 import { bootstrap } from '@fetchproxy/bootstrap'
 import { classifyBridgeError, FetchproxyBridgeDownError } from '@fetchproxy/server'
+import { readEnvVar, parseBoolEnv } from '@chrischall/mcp-utils'
 import pkg from '../package.json' with { type: 'json' }
 import { CreditKarmaClient, extractCookieValue } from './client.js'
 
@@ -75,26 +76,11 @@ export interface ResolvedAuth {
   source: 'env' | 'fetchproxy'
 }
 
-/**
- * Read an env var, trim, and treat blank / `${UNEXPANDED}` placeholders as
- * unset. Defends against MCP hosts that pass `.mcp.json` env blocks through
- * without variable expansion.
- */
-function readEnv(key: string): string | undefined {
-  const raw = process.env[key]
-  if (typeof raw !== 'string') return undefined
-  const trimmed = raw.trim()
-  if (trimmed.length === 0) return undefined
-  if (trimmed === 'undefined' || trimmed === 'null') return undefined
-  if (/^\$\{[^}]*\}$/.test(trimmed)) return undefined
-  return trimmed
-}
-
-/** True if the user has explicitly disabled the fetchproxy fallback. */
+/** True if the user has explicitly disabled the fetchproxy fallback. Accepts
+ *  the standard truthy tokens (`1`, `true`, `yes`, `on`) via mcp-utils'
+ *  `parseBoolEnv`, which also hardens against blank / `${UNEXPANDED}` values. */
 function fetchproxyDisabled(): boolean {
-  const raw = readEnv('CK_DISABLE_FETCHPROXY')
-  if (raw === undefined) return false
-  return ['1', 'true', 'yes', 'on'].includes(raw.toLowerCase())
+  return parseBoolEnv('CK_DISABLE_FETCHPROXY', { default: false })
 }
 
 /**
@@ -107,7 +93,7 @@ function fetchproxyDisabled(): boolean {
  */
 export async function resolveAuth(): Promise<ResolvedAuth> {
   // ── Path 1: CK_COOKIES env var (unchanged from pre-fetchproxy behavior).
-  const envCookies = readEnv('CK_COOKIES')
+  const envCookies = readEnvVar('CK_COOKIES')
   if (envCookies) {
     return { cookies: envCookies, source: 'env' }
   }

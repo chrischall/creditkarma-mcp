@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { textResult } from '@chrischall/mcp-utils'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AppContext } from '../index.js'
 import type { Database } from '../db.js'
@@ -272,7 +273,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     },
     async (args) => {
       const result = await handleListTransactions(args, ctx)
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+      return textResult(result)
     }
   )
 
@@ -287,7 +288,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     },
     async (args) => {
       const result = await handleGetRecentTransactions(args, ctx)
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+      return textResult(result)
     }
   )
 
@@ -304,7 +305,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     },
     async (args) => {
       const result = await handleGetSpendingByCategory(args, ctx)
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+      return textResult(result)
     }
   )
 
@@ -322,7 +323,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     },
     async (args) => {
       const result = await handleGetSpendingByMerchant(args, ctx)
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+      return textResult(result)
     }
   )
 
@@ -338,7 +339,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     },
     async (args) => {
       const result = await handleGetAccountSummary(args, ctx)
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+      return textResult(result)
     }
   )
 }

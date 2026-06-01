@@ -1,9 +1,8 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { readEnvVar, loadDotenvSafely, runMcp } from '@chrischall/mcp-utils'
 import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { CreditKarmaClient, isJwtExpired, extractCookieValue } from './client.js'
+import { CreditKarmaClient, extractCookieValue, warnIfRefreshTokenExpired } from './client.js'
 import { initDb, backfillAccountIds } from './db.js'
 import type { Database } from './db.js'
 
@@ -12,30 +11,12 @@ import { registerSyncTools } from './tools/sync.js'
 import { registerQueryTools } from './tools/query.js'
 import { registerSqlTools } from './tools/sql.js'
 
-/**
- * Read an env var, trim whitespace, and treat as unset if blank or if the value
- * looks like an unsubstituted shell placeholder (e.g. `${FOO}`) — defends
- * against MCP hosts that pass .mcp.json env blocks through unexpanded.
- */
-function readVar(key: string): string | undefined {
-  const raw = process.env[key];
-  if (typeof raw !== 'string') return undefined;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return undefined;
-  if (trimmed === 'undefined' || trimmed === 'null') return undefined;
-  if (/^\$\{[^}]*\}$/.test(trimmed)) return undefined;
-  return trimmed;
-}
-
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// Load .env for local dev; silently skip if dotenv is unavailable (e.g. mcpb bundle)
-try {
-  const { config } = await import('dotenv')
-  config({ path: join(__dirname, '..', '.env'), override: false, quiet: true })
-} catch {
-  // not available — rely on process.env (mcpb sets credentials via mcp_config.env)
-}
+// Load .env for local dev; no-throw when absent (e.g. mcpb bundle relies on
+// mcp_config.env). `readEnvVar` below already hardens against blank /
+// `${UNEXPANDED}` placeholders passed through by some MCP hosts.
+await loadDotenvSafely({ path: join(__dirname, '..', '.env') })
 
 export interface AppContext {
   client: CreditKarmaClient
@@ -44,10 +25,10 @@ export interface AppContext {
 }
 
 async function main() {
-  const dbPath = readVar('CK_DB_PATH') || join(homedir(), '.creditkarma-mcp', 'transactions.db')
+  const dbPath = readEnvVar('CK_DB_PATH') || join(homedir(), '.creditkarma-mcp', 'transactions.db')
   const mcpJsonPath = join(__dirname, '..', '.mcp.json')
 
-  const cookies = readVar('CK_COOKIES') || undefined
+  const cookies = readEnvVar('CK_COOKIES') || undefined
 
   // Canonical CK_COOKIES is a full Cookie header. Parser stays lenient and
   // also accepts a bare CKAT value or `CKAT=<value>` from legacy configs.
@@ -60,10 +41,7 @@ async function main() {
     refreshToken = parts[1]?.trim() || undefined
   }
 
-
-  if (refreshToken && isJwtExpired(refreshToken)) {
-    console.error('[creditkarma-mcp] Warning: refresh token in CK_COOKIES has expired. Sign back into creditkarma.com (with the fetchproxy extension installed) or call ck_set_session with a fresh Cookie header.')
-  }
+  warnIfRefreshTokenExpired(refreshToken)
 
   const db = initDb(dbPath)
   const repaired = backfillAccountIds(db)
@@ -71,23 +49,27 @@ async function main() {
     console.error(`[creditkarma-mcp] Repaired ${repaired.txsUpdated} transactions across ${repaired.accountsCreated} accounts (CK returned empty account.id for legacy rows).`)
   }
 
+  // Build the client/context here so the deferred-config-error pattern is
+  // preserved: the server boots (and answers the host's install-time
+  // tools/list) even when CK_COOKIES is absent — the auth error surfaces on
+  // the first tool call that needs credentials instead.
   const ctx: AppContext = {
     client: new CreditKarmaClient(token, refreshToken, cookies),
     db,
     mcpJsonPath
   }
 
-  const server = new McpServer(
-    { name: 'creditkarma-mcp', version: '2.2.1' } // x-release-please-version
-  )
-
-  registerAuthTools(server, ctx)
-  registerSyncTools(server, ctx)
-  registerQueryTools(server, ctx)
-  registerSqlTools(server, ctx)
-
-  const transport = new StdioServerTransport()
-  await server.connect(transport)
+  await runMcp({
+    name: 'creditkarma-mcp',
+    version: '2.2.1', // x-release-please-version
+    deps: ctx,
+    tools: [
+      registerAuthTools,
+      registerSyncTools,
+      registerQueryTools,
+      registerSqlTools,
+    ],
+  })
 }
 
 main().catch(console.error)

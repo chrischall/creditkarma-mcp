@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { rawTextResult } from '@chrischall/mcp-utils'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join, dirname } from 'path'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -87,7 +88,7 @@ export function registerAuthTools(server: McpServer, ctx: AppContext): void {
     },
     async (args) => {
       const result = await handleSetSession(args, ctx)
-      return { content: [{ type: 'text', text: result }] }
+      return rawTextResult(result)
     }
   )
 }

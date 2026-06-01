@@ -4,6 +4,7 @@ import {
   isJwtExpired,
   decodeJwtPayload,
   extractCookieValue,
+  warnIfRefreshTokenExpired,
   type TransactionPage
 } from '../src/client.js'
 import { makeJwt } from './helpers.js'
@@ -160,6 +161,41 @@ describe('CreditKarmaClient — fetchPage', () => {
   it('throws HTTP error on non-200/401/429 status', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(mockResponse(500))
     await expect(client.fetchPage()).rejects.toThrow('HTTP 500')
+  })
+
+  it('attaches the response body to the HTTP error when present', async () => {
+    const fakeRes = {
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('upstream exploded'),
+    } as unknown as Response
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(fakeRes)
+    await expect(client.fetchPage()).rejects.toThrow(/HTTP 500: upstream exploded/)
+  })
+
+  it('falls back to bare status when the error body read fails', async () => {
+    const fakeRes = {
+      ok: false,
+      status: 502,
+      text: () => Promise.reject(new Error('stream broken')),
+    } as unknown as Response
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(fakeRes)
+    await expect(client.fetchPage()).rejects.toThrow('HTTP 502')
+  })
+
+  it('attaches the response body to the post-429 retry HTTP error', async () => {
+    const retryRes = {
+      ok: false,
+      status: 503,
+      text: () => Promise.resolve('still overloaded'),
+    } as unknown as Response
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(mockResponse(429))
+      .mockResolvedValueOnce(retryRes)
+
+    await expect(
+      Promise.all([client.fetchPage(), vi.runAllTimersAsync()])
+    ).rejects.toThrow(/HTTP 503: still overloaded/)
   })
 
   it('passes afterCursor in request variables', async () => {
@@ -365,6 +401,68 @@ describe('decodeJwtPayload', () => {
     expect(decodeJwtPayload('')).toBeNull()
     expect(decodeJwtPayload('no-dots')).toBeNull()
     expect(decodeJwtPayload('one.two.three')).toBeNull()
+  })
+})
+
+describe('warnIfRefreshTokenExpired', () => {
+  let errSpy: ReturnType<typeof vi.spyOn>
+  beforeEach(() => { errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}) })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('warns when the refresh token is already expired', () => {
+    const past = Math.floor(Date.now() / 1000) - 3600
+    warnIfRefreshTokenExpired(makeJwt({ exp: past }))
+    expect(errSpy).toHaveBeenCalledTimes(1)
+    expect(errSpy.mock.calls[0][0]).toMatch(/refresh token in CK_COOKIES has expired/)
+  })
+
+  it('is a no-op when the refresh token is still valid', () => {
+    const future = Math.floor(Date.now() / 1000) + 3600
+    warnIfRefreshTokenExpired(makeJwt({ exp: future }))
+    expect(errSpy).not.toHaveBeenCalled()
+  })
+
+  it('is a no-op when no refresh token is supplied', () => {
+    warnIfRefreshTokenExpired(undefined)
+    warnIfRefreshTokenExpired(null)
+    warnIfRefreshTokenExpired('')
+    expect(errSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('CreditKarmaClient — concurrent refresh deduplication', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('shares a single in-flight refresh across concurrent callers', async () => {
+    const c = new CreditKarmaClient('old', 'refresh-tok', 'CKTRKID=x')
+    const spy = vi.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ accessToken: 'fresh' }), { status: 200 })
+    )
+
+    const [a, b, d] = await Promise.all([
+      c.refreshAccessToken(),
+      c.refreshAccessToken(),
+      c.refreshAccessToken(),
+    ])
+
+    // One network call serves all three concurrent callers.
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(a).toBe('fresh')
+    expect(b).toBe('fresh')
+    expect(d).toBe('fresh')
+  })
+
+  it('refreshes anew on a later call after the in-flight slot clears', async () => {
+    const c = new CreditKarmaClient('old', 'refresh-tok', 'CKTRKID=x')
+    // Fresh Response per call — a Response body can only be consumed once.
+    const spy = vi.spyOn(global, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ accessToken: 'fresh' }), { status: 200 })
+    )
+
+    await c.refreshAccessToken()
+    await c.refreshAccessToken()
+
+    expect(spy).toHaveBeenCalledTimes(2)
   })
 })
 

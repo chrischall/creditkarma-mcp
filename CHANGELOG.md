@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.2](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.1...v2.2.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* adopt @fetchproxy/server 0.13.0 (bridge host failover + re-pairing) ([#53](https://github.com/chrischall/creditkarma-mcp/issues/53)) ([07de705](https://github.com/chrischall/creditkarma-mcp/commit/07de7055bb01544b5d69088648c0261f4de8fe3e))
+* adopt @fetchproxy/server 1.0.0 + @chrischall/mcp-utils 0.5.0 ([#55](https://github.com/chrischall/creditkarma-mcp/issues/55)) ([8d5b0ae](https://github.com/chrischall/creditkarma-mcp/commit/8d5b0aedbd453bb6bb611c7470ad6df58a4480be))
+
 ## [2.2.1](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.0...v2.2.1) (2026-05-29)
 
 

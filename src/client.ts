@@ -258,8 +258,13 @@ function buildVariables(afterCursor?: string): Record<string, unknown> {
 /** GraphQL/HTTP error codes that mean "the access token is no longer valid" —
  *  these (and only these) should drive the refresh + retry path. Anything else
  *  (schema drift, validation, server faults) is a real error to surface, not an
- *  auth failure to paper over with a pointless token refresh. */
-const AUTH_ERROR_CODE = /\b(UNAUTHENTICATED|UNAUTHORIZED|TOKEN_EXPIRED|FORBIDDEN|401)\b/i
+ *  auth failure to paper over with a pointless token refresh.
+ *
+ *  Deliberately NOT including FORBIDDEN/403: that means "authenticated but not
+ *  authorized for this resource", so a token refresh wouldn't help and the retry
+ *  would just fail again with the same code, masking the real problem. We have
+ *  no evidence CK returns FORBIDDEN for an expired token. */
+const AUTH_ERROR_CODE = /\b(UNAUTHENTICATED|UNAUTHORIZED|TOKEN_EXPIRED|401)\b/i
 
 /** Pull every candidate "error code" string out of a GraphQL error payload:
  *  the top-level `errorCode`, and each entry's `errorCode` / `code` /
@@ -303,7 +308,7 @@ function parseTransactionPage(json: unknown): TransactionPage {
   // cast NPE downstream in sync.ts. Not an auth failure — do NOT refresh.
   const data = top['data']
   if (!data || typeof data !== 'object') {
-    throw new Error('GraphQL response missing `data.prime` (schema drift or unexpected response)')
+    throw new Error('GraphQL response missing `data` (schema drift or unexpected response)')
   }
   const prime = (data as Record<string, unknown>)['prime']
   if (!prime || typeof prime !== 'object') {

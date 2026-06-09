@@ -627,6 +627,7 @@ describe('CreditKarmaClient — parseTransactionPage error paths', () => {
     )
     const err = await client.fetchPage().catch(e => e as Error)
     expect(err.message).not.toBe('TOKEN_EXPIRED')
-    expect(err.message).toMatch(/prime/)
+    // Names the actually-absent node (`data`), not `data.prime` one level down.
+    expect(err.message).toMatch(/missing `data`/)
   })
 })

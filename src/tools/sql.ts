@@ -15,12 +15,22 @@ export interface QuerySqlResult {
 export async function handleQuerySql(args: QuerySqlArgs, ctx: AppContext): Promise<QuerySqlResult> {
   const trimmed = args.sql.replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\n]*/g, '').trim()
 
-  if (!/^SELECT\s/i.test(trimmed)) {
-    throw new Error('Only SELECT statements are allowed.')
+  // WITH is allowed so CTE-shaped reads (`WITH x AS (...) SELECT ...`) work.
+  // The regex alone can't prove a WITH-prefixed statement is read-only
+  // (`WITH ... INSERT` is valid SQLite), so execution below runs under
+  // `PRAGMA query_only`, which makes any write fail with SQLITE_READONLY.
+  if (!/^(WITH|SELECT)\b/i.test(trimmed)) {
+    throw new Error('Only SELECT statements are allowed. (WITH ... SELECT CTEs are also permitted.)')
   }
 
-  const rows = ctx.db.prepare(args.sql).all() as Record<string, unknown>[]
-  return { rows, count: rows.length }
+  ctx.db.exec('PRAGMA query_only = 1')
+  try {
+    const rows = ctx.db.prepare(args.sql).all() as Record<string, unknown>[]
+    return { rows, count: rows.length }
+  } finally {
+    // ctx.db is shared with the sync tools — restore write access.
+    ctx.db.exec('PRAGMA query_only = 0')
+  }
 }
 
 export function registerSqlTools(server: McpServer, ctx: AppContext): void {
@@ -28,7 +38,7 @@ export function registerSqlTools(server: McpServer, ctx: AppContext): void {
     'ck_query_sql',
     {
       description:
-        'Execute a raw SQL SELECT query against the transactions database. ' +
+        'Execute a raw SQL SELECT query (CTEs via WITH ... SELECT are supported) against the transactions database. ' +
         'Non-SELECT statements (INSERT, UPDATE, DELETE, DROP, etc.) are rejected. ' +
         'Tables: transactions, accounts, categories, merchants, sync_state.',
       annotations: { readOnlyHint: true },

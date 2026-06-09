@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync } from 'fs'
+import { mkdirSync, chmodSync, existsSync } from 'fs'
 import { dirname } from 'path'
 import { deriveAccountId } from './accountId.js'
 
@@ -74,7 +74,28 @@ export function initDb(dbPath: string): Database {
     db.exec(MIGRATIONS[v])
   }
 
+  if (dbPath !== ':memory:') {
+    hardenDbPermissions(dbPath)
+  }
+
   return db
+}
+
+/**
+ * Assert hardened modes on the DB and its parent directory (0700 dir / 0600
+ * files) on every open — SQLite creates files with default (world-readable)
+ * permissions, and modes set at creation don't help pre-existing files.
+ * Mirrors `SessionStore.saveToDisk` in @chrischall/mcp-utils. The `-wal`/`-shm`
+ * sidecars may not exist yet (they appear on first use), so they're chmodded
+ * only when present. Exported for direct testing.
+ */
+export function hardenDbPermissions(dbPath: string): void {
+  chmodSync(dirname(dbPath), 0o700)
+  chmodSync(dbPath, 0o600)
+  for (const suffix of ['-wal', '-shm']) {
+    const sidecar = `${dbPath}${suffix}`
+    if (existsSync(sidecar)) chmodSync(sidecar, 0o600)
+  }
 }
 
 export interface AccountRow {

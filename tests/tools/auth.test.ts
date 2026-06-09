@@ -157,6 +157,16 @@ describe('persistSession', () => {
     expect(mode).toBe(0o600)
   })
 
+  // Audit 2026-06-09: writeFileSync's `mode` only applies at creation — a
+  // pre-existing world-readable .env must be re-chmodded on every persist.
+  it('re-asserts mode 0600 on a pre-existing world-readable .env', () => {
+    const envPath = join(tmpDir, '.env')
+    writeFileSync(envPath, 'CK_COOKIES=old\n', { mode: 0o644 })
+    persistSession('CKAT=new', join(tmpDir, '.mcp.json'))
+    const mode = require('fs').statSync(envPath).mode & 0o777
+    expect(mode).toBe(0o600)
+  })
+
   it('inserts a separating newline when appending to a file with no trailing newline', () => {
     const envPath = join(tmpDir, '.env')
     writeFileSync(envPath, 'CK_DB_PATH=val') // no trailing newline

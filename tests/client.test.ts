@@ -528,24 +528,106 @@ describe('CreditKarmaClient — parseTransactionPage error paths', () => {
   beforeEach(() => { client = new CreditKarmaClient('tok') })
   afterEach(() => vi.restoreAllMocks())
 
-  it('treats `errors` array on response as TOKEN_EXPIRED', async () => {
+  // --- Auth-shaped GraphQL errors → TOKEN_EXPIRED (drives refresh + retry) ---
+
+  it('maps a top-level UNAUTHENTICATED errorCode to TOKEN_EXPIRED', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ errors: [{ message: 'unauthorized' }] }), { status: 200 })
+      new Response(JSON.stringify({ errorCode: 'UNAUTHENTICATED' }), { status: 200 })
     )
     await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
   })
 
-  it('treats missing `prime` in response as TOKEN_EXPIRED', async () => {
+  it('maps an errors[].extensions.code of UNAUTHENTICATED to TOKEN_EXPIRED', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        errors: [{ message: 'not signed in', extensions: { code: 'UNAUTHENTICATED' } }]
+      }), { status: 200 })
+    )
+    await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
+  })
+
+  it('maps an errors[].errorCode of UNAUTHORIZED to TOKEN_EXPIRED', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ errors: [{ errorCode: 'UNAUTHORIZED' }] }), { status: 200 })
+    )
+    await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
+  })
+
+  it('maps an errors[].code of UNAUTHENTICATED to TOKEN_EXPIRED', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ errors: [{ code: 'UNAUTHENTICATED' }] }), { status: 200 })
+    )
+    await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
+  })
+
+  it('ignores null/non-object entries in the errors array when scanning for auth codes', async () => {
+    // A malformed errors array (null + a string entry alongside a real one)
+    // must not crash; the auth code on the well-formed entry still wins.
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ errors: [null, 'oops', { errorCode: 'UNAUTHENTICATED' }] }), { status: 200 })
+    )
+    await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
+  })
+
+  // --- Non-auth GraphQL errors → real message, NOT TOKEN_EXPIRED ---
+
+  it('surfaces the real message for a non-auth GraphQL error (schema/validation)', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        errors: [{ message: 'Cannot query field "frob" on type "TransactionsHub"' }]
+      }), { status: 200 })
+    )
+    const err = await client.fetchPage().catch(e => e as Error)
+    expect(err.message).not.toBe('TOKEN_EXPIRED')
+    expect(err.message).toMatch(/GraphQL/i)
+    expect(err.message).toMatch(/Cannot query field/)
+  })
+
+  it('surfaces a non-auth top-level errorCode without mapping it to TOKEN_EXPIRED', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ errorCode: 'INTERNAL_SERVER_ERROR' }), { status: 200 })
+    )
+    const err = await client.fetchPage().catch(e => e as Error)
+    expect(err.message).not.toBe('TOKEN_EXPIRED')
+    expect(err.message).toMatch(/INTERNAL_SERVER_ERROR/)
+  })
+
+  // --- Schema drift (missing nodes) → parse error naming the drift, NOT TOKEN_EXPIRED ---
+
+  it('throws a parse error naming the drift when `prime` is missing', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ data: {} }), { status: 200 })
     )
-    await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
+    const err = await client.fetchPage().catch(e => e as Error)
+    expect(err.message).not.toBe('TOKEN_EXPIRED')
+    expect(err.message).toMatch(/prime/)
   })
 
-  it('treats `data: null` (entirely missing) as TOKEN_EXPIRED', async () => {
+  it('throws a parse error naming the drift when `transactionsHub` is missing', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: { prime: {} } }), { status: 200 })
+    )
+    const err = await client.fetchPage().catch(e => e as Error)
+    expect(err.message).not.toBe('TOKEN_EXPIRED')
+    expect(err.message).toMatch(/transactionsHub/)
+  })
+
+  it('throws a parse error naming the drift when `transactionPage` is missing', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: { prime: { transactionsHub: {} } } }), { status: 200 })
+    )
+    const err = await client.fetchPage().catch(e => e as Error)
+    expect(err.message).not.toBe('TOKEN_EXPIRED')
+    expect(err.message).toMatch(/transactionPage/)
+  })
+
+  it('throws a parse error naming the drift when `data` is entirely missing', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({}), { status: 200 })
     )
-    await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
+    const err = await client.fetchPage().catch(e => e as Error)
+    expect(err.message).not.toBe('TOKEN_EXPIRED')
+    // Names the actually-absent node (`data`), not `data.prime` one level down.
+    expect(err.message).toMatch(/missing `data`/)
   })
 })

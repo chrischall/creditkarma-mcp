@@ -17,7 +17,18 @@ export interface SyncResult {
   new: number
   updated: number
   total: number
+  /** Set only when the page loop terminated on a safety guard rather than
+   *  reaching the end of the data — surfaces a clear outcome instead of
+   *  silently truncating or looping forever.
+   *  - `cursor_stuck`: CK returned hasNextPage:true with a non-advancing cursor.
+   *  - `page_cap`: hit MAX_SYNC_PAGES; more data may remain. */
+  stopped?: 'cursor_stuck' | 'page_cap'
 }
+
+/** Hard ceiling on pages fetched in a single sync. CK pages are ~50–100 txns,
+ *  so a few hundred pages covers years of history. The cap exists to bound a
+ *  runaway loop (corrupted cursor, server bug), not to limit legitimate syncs. */
+export const MAX_SYNC_PAGES = 300
 
 export async function handleSyncTransactions(
   args: SyncArgs,
@@ -46,8 +57,27 @@ export async function handleSyncTransactions(
   let updatedCount = 0
   let totalCount = 0
   let done = false
+  let stopped: SyncResult['stopped']
+  let pageCount = 0
+  // The cursor used for the request that produced the current page. Tracked so
+  // we can detect a non-advancing cursor (CK returning hasNextPage:true but the
+  // same endCursor, or a corrupted resume cursor replaying the same page) and
+  // bail instead of hammering the endpoint forever.
+  let prevCursor: string | undefined = cursor
 
   while (!done) {
+    // Cap: never loop unboundedly. Surface a clear "stopped at cap" outcome and
+    // leave last_cursor checkpointed below so a follow-up sync can resume.
+    if (pageCount >= MAX_SYNC_PAGES) {
+      stopped = 'page_cap'
+      // Reaching the cap means we paged MAX_SYNC_PAGES times, each advancing the
+      // cursor (a non-advancing cursor trips `cursor_stuck` first), so `cursor`
+      // is always a real resume point here. Checkpoint it for the next run.
+      setSyncState(ctx.db, 'last_cursor', cursor!)
+      break
+    }
+    pageCount++
+
     let page
     try {
       page = await ctx.client.fetchPage(cursor)
@@ -105,14 +135,33 @@ export async function handleSyncTransactions(
     }
 
     if (!page.pageInfo.hasNextPage) done = true
-    cursor = page.pageInfo.endCursor
+
+    const nextCursor = page.pageInfo.endCursor
+    // Non-advancing cursor: CK says there's more but the endCursor matches the
+    // cursor we just paged from (or the cursor never moves). Following it would
+    // replay the same page forever. Bail with a clear outcome.
+    if (!done && nextCursor === prevCursor) {
+      stopped = 'cursor_stuck'
+      done = true
+    }
+    cursor = nextCursor
+    prevCursor = nextCursor
   }
 
-  setSyncState(ctx.db, 'last_sync_date', today)
-  // Clear resume cursor on success
-  ctx.db.prepare("DELETE FROM sync_state WHERE key = 'last_cursor'").run()
+  // A capped or stuck sync is intentionally incomplete — keep last_cursor (the
+  // cap path already checkpointed it) so the next run resumes. Only a fully
+  // drained sync advances last_sync_date and clears the resume cursor.
+  if (!stopped) {
+    setSyncState(ctx.db, 'last_sync_date', today)
+    // Clear resume cursor on success
+    ctx.db.prepare("DELETE FROM sync_state WHERE key = 'last_cursor'").run()
+  } else if (stopped === 'cursor_stuck') {
+    // A stuck cursor is not a clean finish — checkpoint it so a later sync can
+    // retry from the same point (the page_cap path already checkpointed above).
+    setSyncState(ctx.db, 'last_cursor', cursor!)
+  }
 
-  return { new: newCount, updated: updatedCount, total: totalCount }
+  return { new: newCount, updated: updatedCount, total: totalCount, ...(stopped ? { stopped } : {}) }
 }
 
 async function refreshOrThrow(ctx: AppContext): Promise<void> {

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { rawTextResult } from '@chrischall/mcp-utils'
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, chmodSync } from 'fs'
 import { join, dirname } from 'path'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AppContext } from '../index.js'
@@ -67,6 +67,9 @@ export function persistSession(
 
   try {
     writeFileSync(envPath, updated, { mode: 0o600 })
+    // writeFileSync's `mode` only applies when the file is created — re-assert
+    // 0600 so a pre-existing world-readable .env gets locked down too.
+    chmodSync(envPath, 0o600)
   } catch {
     return '.env could not be written — session applied in memory only'
   }

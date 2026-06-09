@@ -84,6 +84,53 @@ describe('ck_query_sql', () => {
     await expect(handleQuerySql({ sql: 'SELECT * FROM nonexistent_table' }, ctx))
       .rejects.toThrow()
   })
+
+  // Audit 2026-06-09: WITH ... SELECT CTEs are legitimate read-only queries
+  it('allows WITH ... SELECT (CTE) queries', async () => {
+    const result = await handleQuerySql({
+      sql: 'WITH x AS (SELECT id, amount FROM transactions) SELECT * FROM x'
+    }, ctx)
+    expect(result.rows).toHaveLength(1)
+    expect((result.rows[0] as { id: string }).id).toBe('tx1')
+  })
+
+  it('allows lowercase with ... select', async () => {
+    const result = await handleQuerySql({ sql: 'with x as (select 1 as v) select * from x' }, ctx)
+    expect(result.rows).toEqual([{ v: 1 }])
+  })
+
+  it('rejects WITHOUT-prefixed statements (regex anchors on word boundary)', async () => {
+    await expect(handleQuerySql({ sql: 'WITHDRAW everything' }, ctx))
+      .rejects.toThrow('Only SELECT statements are allowed')
+  })
+
+  it('blocks CTE-wrapped writes (WITH ... INSERT) at execution time', async () => {
+    await expect(handleQuerySql({
+      sql: "WITH x AS (SELECT 'evil' AS id) INSERT INTO merchants (id, name) SELECT id, id FROM x"
+    }, ctx)).rejects.toThrow(/readonly/i)
+    // and nothing was written
+    const check = await handleQuerySql({ sql: "SELECT * FROM merchants WHERE id = 'evil'" }, ctx)
+    expect(check.rows).toHaveLength(0)
+  })
+
+  it('blocks CTE-wrapped deletes (WITH ... DELETE) at execution time', async () => {
+    await expect(handleQuerySql({
+      sql: 'WITH x AS (SELECT 1) DELETE FROM transactions'
+    }, ctx)).rejects.toThrow(/readonly/i)
+    const check = await handleQuerySql({ sql: 'SELECT * FROM transactions' }, ctx)
+    expect(check.rows).toHaveLength(1)
+  })
+
+  it('restores write access on the shared connection after a query', async () => {
+    await handleQuerySql({ sql: 'SELECT 1 AS one' }, ctx)
+    // sync tools share ctx.db — writes must still work after a read-only query
+    expect(() => upsertMerchant(ctx.db, { id: 'm2', name: 'Peets' })).not.toThrow()
+  })
+
+  it('restores write access even when the query throws', async () => {
+    await expect(handleQuerySql({ sql: 'SELECT * FROM nonexistent_table' }, ctx)).rejects.toThrow()
+    expect(() => upsertMerchant(ctx.db, { id: 'm3', name: 'Blue Bottle' })).not.toThrow()
+  })
 })
 
 describe('registerSqlTools', () => {

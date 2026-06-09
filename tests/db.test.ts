@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { rmSync } from 'fs'
+import { rmSync, mkdtempSync, statSync, chmodSync, existsSync } from 'fs'
 import {
-  initDb,
+  initDb, hardenDbPermissions,
   upsertAccount, upsertCategory, upsertMerchant, upsertTransaction,
   getSyncState, setSyncState, backfillAccountIds,
   type AccountRow, type CategoryRow, type MerchantRow, type TransactionRow
@@ -63,18 +63,20 @@ describe('initDb', () => {
   })
 })
 
-// WAL mode and idempotency require a real file — :memory: ignores WAL pragma
+// WAL mode and idempotency require a real file — :memory: ignores WAL pragma.
+// Each test gets its own scratch directory: initDb chmods the DB's parent dir
+// to 0700, which must never touch the shared OS tmpdir.
 describe('initDb — file-based tests', () => {
+  let tmpDir: string
   let dbPath: string
 
   beforeEach(() => {
-    dbPath = join(tmpdir(), `ck-test-${Date.now()}-${Math.random()}.db`)
+    tmpDir = mkdtempSync(join(tmpdir(), 'ck-test-'))
+    dbPath = join(tmpDir, 'transactions.db')
   })
 
   afterEach(() => {
-    rmSync(dbPath, { force: true })
-    rmSync(`${dbPath}-wal`, { force: true })
-    rmSync(`${dbPath}-shm`, { force: true })
+    rmSync(tmpDir, { recursive: true, force: true })
   })
 
   it('enables WAL mode', () => {
@@ -107,13 +109,71 @@ describe('initDb — file-based tests', () => {
   })
 
   it('creates parent directory if it does not exist', () => {
-    const nestedPath = join(tmpdir(), `ck-newdir-${Date.now()}`, 'sub', 'transactions.db')
+    const nestedPath = join(tmpDir, 'sub', 'transactions.db')
     const db = initDb(nestedPath)
     const row = db.prepare('SELECT version FROM schema_version').get() as { version: number }
     expect(row.version).toBe(1)
     db.close()
-    // cleanup the parent dir
-    rmSync(join(nestedPath, '..', '..'), { recursive: true, force: true })
+  })
+})
+
+// Audit 2026-06-09: the DB stores financial transaction history — assert
+// hardened modes (0700 dir / 0600 files) on every open, mirroring
+// SessionStore.saveToDisk in @chrischall/mcp-utils.
+describe('initDb — file permissions hardening', () => {
+  let tmpDir: string
+  let dbPath: string
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'ck-perms-'))
+    dbPath = join(tmpDir, 'transactions.db')
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('creates the DB file with mode 0600', () => {
+    const db = initDb(dbPath)
+    db.close()
+    expect(statSync(dbPath).mode & 0o777).toBe(0o600)
+  })
+
+  it('sets the parent directory to mode 0700', () => {
+    const db = initDb(dbPath)
+    db.close()
+    expect(statSync(tmpDir).mode & 0o777).toBe(0o700)
+  })
+
+  it('chmods -wal and -shm sidecar files to 0600 when they exist', () => {
+    const db = initDb(dbPath)
+    // Migrations write inside initDb, so WAL sidecars exist while the handle is open
+    expect(existsSync(`${dbPath}-wal`)).toBe(true)
+    expect(statSync(`${dbPath}-wal`).mode & 0o777).toBe(0o600)
+    expect(statSync(`${dbPath}-shm`).mode & 0o777).toBe(0o600)
+    db.close()
+  })
+
+  it('re-asserts hardened modes when reopening a DB with loose permissions', () => {
+    const db1 = initDb(dbPath)
+    db1.close()
+    chmodSync(dbPath, 0o644)
+    chmodSync(tmpDir, 0o755)
+    const db2 = initDb(dbPath)
+    db2.close()
+    expect(statSync(dbPath).mode & 0o777).toBe(0o600)
+    expect(statSync(tmpDir).mode & 0o777).toBe(0o700)
+  })
+
+  it('tolerates absent -wal/-shm sidecar files', () => {
+    // A closed DB has no sidecars (SQLite removes them on clean close)
+    const db = initDb(dbPath)
+    db.close()
+    expect(existsSync(`${dbPath}-wal`)).toBe(false)
+    expect(existsSync(`${dbPath}-shm`)).toBe(false)
+    chmodSync(dbPath, 0o644)
+    expect(() => hardenDbPermissions(dbPath)).not.toThrow()
+    expect(statSync(dbPath).mode & 0o777).toBe(0o600)
   })
 })
 

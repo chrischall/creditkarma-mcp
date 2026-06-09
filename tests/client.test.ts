@@ -302,6 +302,22 @@ describe('CreditKarmaClient — refresh token', () => {
     await expect(c.refreshAccessToken()).rejects.toThrow('(empty body)')
   })
 
+  // Audit 2026-06-09: refresh-failure bodies must be redacted (not just sliced)
+  // before surfacing — match the GraphQL path's truncateErrorMessage usage.
+  it('refreshAccessToken redacts JWTs embedded in error bodies', async () => {
+    const c = new CreditKarmaClient('tok', 'ref')
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdef123456'
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(`{"error":"bad token ${jwt}"}`, {
+        status: 400,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+    const err = await c.refreshAccessToken().then(() => null, (e: Error) => e)
+    expect(err?.message).toContain('[REDACTED]')
+    expect(err?.message).not.toContain(jwt)
+  })
+
   it('refreshAccessToken truncates long error bodies to 200 chars + ellipsis', async () => {
     const c = new CreditKarmaClient('tok', 'ref')
     const long = '{"error":"' + 'x'.repeat(500) + '"}'

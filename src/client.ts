@@ -255,15 +255,69 @@ function buildVariables(afterCursor?: string): Record<string, unknown> {
   }
 }
 
+/** GraphQL/HTTP error codes that mean "the access token is no longer valid" —
+ *  these (and only these) should drive the refresh + retry path. Anything else
+ *  (schema drift, validation, server faults) is a real error to surface, not an
+ *  auth failure to paper over with a pointless token refresh. */
+const AUTH_ERROR_CODE = /\b(UNAUTHENTICATED|UNAUTHORIZED|TOKEN_EXPIRED|FORBIDDEN|401)\b/i
+
+/** Pull every candidate "error code" string out of a GraphQL error payload:
+ *  the top-level `errorCode`, and each entry's `errorCode` / `code` /
+ *  `extensions.code`. CK has shipped auth failures in several of these shapes. */
+function collectErrorCodes(top: Record<string, unknown>): string[] {
+  const codes: string[] = []
+  if (typeof top['errorCode'] === 'string') codes.push(top['errorCode'])
+  const errors = top['errors']
+  if (Array.isArray(errors)) {
+    for (const e of errors) {
+      if (!e || typeof e !== 'object') continue
+      const obj = e as Record<string, unknown>
+      if (typeof obj['errorCode'] === 'string') codes.push(obj['errorCode'])
+      if (typeof obj['code'] === 'string') codes.push(obj['code'])
+      const ext = obj['extensions']
+      if (ext && typeof ext === 'object' && typeof (ext as Record<string, unknown>)['code'] === 'string') {
+        codes.push((ext as Record<string, unknown>)['code'] as string)
+      }
+    }
+  }
+  return codes
+}
+
 function parseTransactionPage(json: unknown): TransactionPage {
   const top = json as Record<string, unknown>
-  // CK returns errorCode for some auth failures, errors array for others
-  if (top['errorCode'] || top['errors']) throw new Error(`TOKEN_EXPIRED`)
-  const data = (top['data'] ?? {}) as Record<string, unknown>
-  const prime = data['prime'] as Record<string, unknown> | undefined
-  if (!prime) throw new Error(`TOKEN_EXPIRED`)
-  const hub = prime['transactionsHub'] as Record<string, unknown>
-  return (hub['transactionPage']) as TransactionPage
+
+  // CK signals errors via a top-level `errorCode` and/or a GraphQL `errors`
+  // array. Only auth-shaped codes mean "refresh the token" — map those to
+  // TOKEN_EXPIRED. Every other GraphQL error (schema drift, validation, server
+  // fault) is surfaced verbatim (redacted) so the user sees the real problem
+  // instead of a misleading "token expired" after a wasted refresh + retry.
+  if (top['errorCode'] || top['errors']) {
+    const codes = collectErrorCodes(top)
+    if (codes.some(c => AUTH_ERROR_CODE.test(c))) throw new Error('TOKEN_EXPIRED')
+    const payload = truncateErrorMessage(JSON.stringify(top['errors'] ?? top['errorCode']), 300).trim()
+    throw new Error(`GraphQL error: ${payload}`)
+  }
+
+  // Schema drift: a 200 with a well-formed but unexpected shape. Name the
+  // missing node so the failure is diagnosable, rather than letting a blind
+  // cast NPE downstream in sync.ts. Not an auth failure — do NOT refresh.
+  const data = top['data']
+  if (!data || typeof data !== 'object') {
+    throw new Error('GraphQL response missing `data.prime` (schema drift or unexpected response)')
+  }
+  const prime = (data as Record<string, unknown>)['prime']
+  if (!prime || typeof prime !== 'object') {
+    throw new Error('GraphQL response missing `data.prime` (schema drift or unexpected response)')
+  }
+  const hub = (prime as Record<string, unknown>)['transactionsHub']
+  if (!hub || typeof hub !== 'object') {
+    throw new Error('GraphQL response missing `data.prime.transactionsHub` (schema drift)')
+  }
+  const transactionPage = (hub as Record<string, unknown>)['transactionPage']
+  if (!transactionPage || typeof transactionPage !== 'object') {
+    throw new Error('GraphQL response missing `data.prime.transactionsHub.transactionPage` (schema drift)')
+  }
+  return transactionPage as TransactionPage
 }
 
 function sleep(ms: number): Promise<void> {

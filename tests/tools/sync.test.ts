@@ -183,6 +183,17 @@ describe('ck_sync_transactions', () => {
     expect(result.total).toBe(1)
   })
 
+  it('does not trigger a refresh when a non-auth GraphQL error surfaces mid-sync', async () => {
+    ctx.client.setRefreshToken('refresh-tok')
+    const refreshSpy = vi.spyOn(ctx.client, 'refreshAccessToken')
+    vi.spyOn(ctx.client, 'fetchPage')
+      .mockRejectedValueOnce(new Error('GraphQL error: Cannot query field "frob"'))
+
+    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow(/Cannot query field/)
+    // A schema/validation error must NOT drive a pointless token refresh.
+    expect(refreshSpy).not.toHaveBeenCalled()
+  })
+
   it('saves last_cursor when a non-TOKEN_EXPIRED error happens mid-sync', async () => {
     vi.spyOn(ctx.client, 'fetchPage')
       .mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')], true, 'cursor-mid'))
@@ -238,6 +249,54 @@ describe('ck_sync_transactions', () => {
     await handleSyncTransactions({}, ctx)
     // oldest on page 1 (2024-01-15) is still > cutoff (2024-01-02), so page 2 must be fetched.
     expect(fetchSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('terminates when the cursor does not advance between pages (non-advancing endCursor)', async () => {
+    // CK bug / corrupted resume: hasNextPage stays true but endCursor never
+    // changes. Without a guard this loops forever hammering the endpoint.
+    const fetchSpy = vi.spyOn(ctx.client, 'fetchPage')
+      .mockResolvedValue(makePage([makeTx('tx-stuck', '2024-02-10')], true, 'same-cursor'))
+
+    const result = await handleSyncTransactions({ force_full: true }, ctx) as {
+      total: number; stopped?: string
+    }
+
+    // First page fetched (cursor undefined), second fetched (cursor 'same-cursor'),
+    // third would repeat 'same-cursor' → bail. So at most 2 fetches.
+    expect(fetchSpy.mock.calls.length).toBeLessThanOrEqual(2)
+    expect(result.stopped).toBe('cursor_stuck')
+  })
+
+  it('stops at the max-pages cap and surfaces a clear outcome instead of truncating silently', async () => {
+    // Every page advances the cursor and claims more pages forever. The cap
+    // must kick in. Cursor is the page index so it always advances.
+    let i = 0
+    vi.spyOn(ctx.client, 'fetchPage').mockImplementation(async () => {
+      i++
+      return makePage([makeTx(`tx${i}`, '2024-02-10')], true, `cursor-${i}`)
+    })
+
+    const result = await handleSyncTransactions({ force_full: true }, ctx) as {
+      total: number; stopped?: string
+    }
+
+    expect(result.stopped).toBe('page_cap')
+    // The cap is bounded — not unbounded. A few hundred pages, not thousands.
+    expect(i).toBeLessThanOrEqual(500)
+    expect(i).toBeGreaterThan(1)
+  })
+
+  it('does not flag a stopped reason on a normal bounded multi-page sync', async () => {
+    vi.spyOn(ctx.client, 'fetchPage')
+      .mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')], true, 'c1'))
+      .mockResolvedValueOnce(makePage([makeTx('tx2', '2024-02-09')], true, 'c2'))
+      .mockResolvedValueOnce(makePage([makeTx('tx3', '2024-02-08')]))
+
+    const result = await handleSyncTransactions({ force_full: true }, ctx) as {
+      total: number; stopped?: string
+    }
+    expect(result.total).toBe(3)
+    expect(result.stopped).toBeUndefined()
   })
 
   it('rolls back the DB transaction if an upsert throws', async () => {

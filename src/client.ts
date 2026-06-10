@@ -2,6 +2,7 @@ import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
 import { truncateErrorMessage } from '@chrischall/mcp-utils'
+import { TokenManager } from '@chrischall/mcp-utils/session'
 
 const TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
 export const GRAPHQL_ENDPOINT = 'https://api.creditkarma.com/graphql'
@@ -36,21 +37,67 @@ export interface ApiTransaction {
 
 export class CreditKarmaClient {
   private token: string | null = null
-  private tokenSetAt: number | null = null
   private refreshToken: string | null = null
   private cookies: string | null = null
-  /** In-flight refresh, shared across concurrent callers (see refreshAccessToken). */
-  private refreshInFlight: Promise<string> | null = null
+  /**
+   * Owns the bearer-token lifecycle: TTL/expiry tracking, proactive refresh
+   * inside a skew window, the single 401-replay on the authed GraphQL POST, and
+   * the single-flight semaphore that coalesces concurrent refreshes into ONE
+   * `/member/oauth2/refresh` POST. Replaces the hand-rolled `tokenSetAt` TTL
+   * tracking + `refreshInFlight` single-flight this class used to carry.
+   *
+   * CK's access/refresh tokens + cookies remain this class's own mutable state
+   * (the sync `getToken()`/`getRefreshToken()`/`getCookies()` accessors and the
+   * request headers read them directly); the refresh callback mirrors fresh
+   * tokens back into those fields so the two stay in lock-step. The manager is
+   * rebuilt on every external `setToken()` so its expiry window restarts from
+   * "now" — matching the old `tokenSetAt = Date.now()` reset.
+   */
+  private tokens: TokenManager
 
   constructor(token?: string, refreshToken?: string, cookies?: string) {
-    if (token) this.setToken(token)
     if (refreshToken) this.refreshToken = refreshToken
     if (cookies) this.cookies = cookies
+    if (token) this.token = token
+    this.tokens = this.buildTokenManager()
+  }
+
+  /**
+   * (Re)build the {@link TokenManager} around the client's current token state,
+   * restarting the TTL window from now. The refresh callback runs CK's native
+   * refresh POST and writes the fresh access/refresh tokens straight onto this
+   * client (NOT via `setToken`, which would rebuild the manager mid-flight and
+   * orphan the in-flight single-flight promise); the manager applies the new
+   * `expiresAt` to its own window.
+   */
+  private buildTokenManager(): TokenManager {
+    return new TokenManager({
+      initial: {
+        accessToken: this.token ?? '',
+        refreshToken: this.refreshToken ?? undefined,
+        expiresAt: Date.now() + TOKEN_TTL_MS,
+      },
+      // TokenManager only calls this when a refresh token is present (guaranteed
+      // by `refreshAccessToken`'s own NO_REFRESH_TOKEN guard / by withAuth only
+      // refreshing when it has one), so the callback can assume one exists.
+      refresh: async () => {
+        const { accessToken, refreshToken } = await this.doRefreshAccessToken()
+        this.token = accessToken
+        if (refreshToken) this.refreshToken = refreshToken
+        return {
+          accessToken,
+          // Omit an empty/absent refresh token so the manager keeps the prior one.
+          refreshToken: refreshToken || undefined,
+          expiresAt: Date.now() + TOKEN_TTL_MS,
+        }
+      },
+    })
   }
 
   setToken(token: string): void {
     this.token = token
-    this.tokenSetAt = Date.now()
+    // Restart the TTL window (old behavior: `tokenSetAt = Date.now()`).
+    this.tokens = this.buildTokenManager()
   }
 
   getToken(): string | null {
@@ -63,6 +110,8 @@ export class CreditKarmaClient {
 
   setRefreshToken(token: string): void {
     this.refreshToken = token
+    // Keep the manager's view of the refresh token current for later refreshes.
+    this.tokens = this.buildTokenManager()
   }
 
   getCookies(): string | null {
@@ -74,27 +123,47 @@ export class CreditKarmaClient {
   }
 
   isTokenExpired(): boolean {
-    if (!this.token || this.tokenSetAt === null) return true
-    return Date.now() - this.tokenSetAt > TOKEN_TTL_MS
+    if (!this.token) return true
+    // TTL is owned by the TokenManager now; expired ⟺ at/after its expiry.
+    return Date.now() >= this.tokens.getExpiresAt()
+  }
+
+  /**
+   * POST the authed GraphQL query through the TokenManager so a token within the
+   * skew window is proactively refreshed first, and a hard HTTP 401 triggers one
+   * refresh + replay. When no refresh token is available the manager's refresh
+   * attempt rejects — surface that as a 401 Response so `fetchPage` maps it to
+   * the same TOKEN_EXPIRED the bespoke path produced (sync.ts then re-auths).
+   *
+   * (CK's PRIMARY expired-token signal is a 200 body carrying an auth `errorCode`,
+   * not an HTTP 401 — that GraphQL-errorCode path is mapped to TOKEN_EXPIRED in
+   * `parseTransactionPage` and reactively refreshed by the sync loop, since the
+   * manager's reactive replay is HTTP-status-based and can't see GraphQL bodies.)
+   */
+  private graphqlPost(variables: Record<string, unknown>): Promise<Response> {
+    return this.tokens
+      .withAuth((accessToken) =>
+        this.post(GRAPHQL_ENDPOINT, { query: TRANSACTION_QUERY, variables }, accessToken)
+      )
+      .catch((err: unknown) => {
+        if (err instanceof Error && /no refresh token/i.test(err.message)) {
+          return new Response(null, { status: 401 })
+        }
+        throw err
+      })
   }
 
   /** Fetch a single page of transactions. Throws TOKEN_EXPIRED on 401. */
   async fetchPage(afterCursor?: string): Promise<TransactionPage> {
     if (!this.token) throw new Error('TOKEN_EXPIRED')
 
-    const response = await this.post(GRAPHQL_ENDPOINT, {
-      query: TRANSACTION_QUERY,
-      variables: buildVariables(afterCursor)
-    })
+    const response = await this.graphqlPost(buildVariables(afterCursor))
 
     if (response.status === 401) throw new Error('TOKEN_EXPIRED')
 
     if (response.status === 429) {
       await sleep(2000)
-      const retry = await this.post(GRAPHQL_ENDPOINT, {
-        query: TRANSACTION_QUERY,
-        variables: buildVariables(afterCursor)
-      })
+      const retry = await this.graphqlPost(buildVariables(afterCursor))
       if (retry.status === 401) throw new Error('TOKEN_EXPIRED')
       if (!retry.ok) throw new Error(await httpErrorMessage(retry))
       return parseTransactionPage(await retry.json())
@@ -108,24 +177,26 @@ export class CreditKarmaClient {
    * Refresh the access token using CK's native refresh endpoint.
    * Requires a refresh token and session cookies (captured after login).
    *
-   * Concurrent callers share a single in-flight request: the first call starts
-   * the refresh and stores its promise; overlapping callers (e.g. a multi-page
-   * sync that 401s on several pages at once) await that same promise instead of
-   * firing duplicate POSTs to /member/oauth2/refresh (wasted quota, rate-limit
-   * risk). The slot is cleared in `finally`, so a later expiry refreshes anew.
+   * The {@link TokenManager} owns the single-flight: concurrent callers (e.g. a
+   * multi-page sync that 401s on several pages at once) coalesce onto ONE
+   * in-flight refresh instead of firing duplicate POSTs to
+   * /member/oauth2/refresh (wasted quota, rate-limit risk). The in-flight slot
+   * clears on settle, so a later expiry refreshes anew.
    */
-  refreshAccessToken(): Promise<string> {
-    if (this.refreshInFlight) return this.refreshInFlight
-    const p = this.doRefreshAccessToken().finally(() => {
-      this.refreshInFlight = null
-    })
-    this.refreshInFlight = p
-    return p
+  async refreshAccessToken(): Promise<string> {
+    // Keep CK's actionable NO_REFRESH_TOKEN message (the manager would otherwise
+    // reject with its generic "no refresh token is available").
+    if (!this.refreshToken) throw new Error('NO_REFRESH_TOKEN: Call ck_set_session first.')
+    await this.tokens.refreshNow()
+    return this.token!
   }
 
-  private async doRefreshAccessToken(): Promise<string> {
-    if (!this.refreshToken) throw new Error('NO_REFRESH_TOKEN: Call ck_set_session first.')
-
+  /**
+   * Perform CK's native refresh POST and return the parsed tokens. The
+   * lifecycle (single-flight, expiry, mirroring onto this client) is handled by
+   * the {@link TokenManager} refresh callback that wraps this.
+   */
+  private async doRefreshAccessToken(): Promise<{ accessToken: string; refreshToken?: string }> {
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       'Origin': 'https://www.creditkarma.com',
@@ -168,16 +239,14 @@ export class CreditKarmaClient {
     const json = await res.json() as { accessToken?: string; refreshToken?: string; error?: string }
     if (json.error || !json.accessToken) throw new Error(`Token refresh error: ${json.error ?? 'no accessToken in response'}`)
 
-    this.setToken(json.accessToken)
-    if (json.refreshToken) this.refreshToken = json.refreshToken
-    return json.accessToken
+    return { accessToken: json.accessToken, refreshToken: json.refreshToken }
   }
 
-  private post(url: string, body: unknown): Promise<Response> {
+  private post(url: string, body: unknown, token: string): Promise<Response> {
     return fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${this.token!}`,
+        'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
         'Origin': 'https://www.creditkarma.com',
         'Referer': 'https://www.creditkarma.com/',

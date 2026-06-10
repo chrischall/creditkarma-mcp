@@ -121,6 +121,39 @@ describe('CreditKarmaClient — fetchPage', () => {
     await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
   })
 
+  it('on a 401 with a refresh token, refreshes and replays once (success)', async () => {
+    // Client has a refresh token, so the TokenManager's reactive replay can
+    // heal a hard HTTP 401: refresh → replay the GraphQL POST → succeed.
+    const c = new CreditKarmaClient('stale-token', 'refresh-tok', 'CKTRKID=x')
+    const fetchSpy = vi.spyOn(global, 'fetch')
+      // 1st GraphQL POST → 401 (token rejected)
+      .mockResolvedValueOnce(mockResponse(401))
+      // refresh POST → fresh access token
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accessToken: 'fresh-token' }), { status: 200 }))
+      // replayed GraphQL POST → 200
+      .mockResolvedValueOnce(mockResponse(200, { data: { prime: { transactionsHub: { transactionPage: mockPage } } } }))
+
+    const page = await c.fetchPage()
+    expect(page.transactions).toHaveLength(1)
+    expect(c.getToken()).toBe('fresh-token')
+    // GraphQL ×2 (original + replay) + refresh ×1
+    expect(fetchSpy).toHaveBeenCalledTimes(3)
+    // The replay used the freshly-refreshed bearer.
+    const replayInit = fetchSpy.mock.calls[2][1] as RequestInit
+    expect((replayInit.headers as Record<string, string>)['Authorization']).toBe('Bearer fresh-token')
+  })
+
+  it('surfaces a refresh failure that fires while replaying a 401 GraphQL POST', async () => {
+    // Client has a refresh token, GraphQL 401s, but the refresh POST itself
+    // fails. That error is NOT the "no refresh token" case, so it propagates
+    // verbatim instead of being mapped to TOKEN_EXPIRED.
+    const c = new CreditKarmaClient('stale-token', 'refresh-tok', 'CKTRKID=x')
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(mockResponse(401))
+      .mockResolvedValueOnce(new Response('', { status: 401 }))
+    await expect(c.fetchPage()).rejects.toThrow('Token refresh failed')
+  })
+
   it('retries once on 429 and succeeds', async () => {
     const fetchSpy = vi.spyOn(global, 'fetch')
       .mockResolvedValueOnce(mockResponse(429))

@@ -1,5 +1,9 @@
 # Credit Karma MCP
 
+[![CI](https://github.com/chrischall/creditkarma-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/chrischall/creditkarma-mcp/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/creditkarma-mcp)](https://www.npmjs.com/package/creditkarma-mcp)
+[![license](https://img.shields.io/npm/l/creditkarma-mcp)](LICENSE)
+
 A [Model Context Protocol](https://modelcontextprotocol.io) server that connects Claude to [Credit Karma](https://www.creditkarma.com), giving you natural-language access to your transactions, spending patterns, and account summaries.
 
 > [!WARNING]

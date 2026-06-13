@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.2.3](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.2...v2.2.3) (2026-06-13)
+
+
+### Bug Fixes
+
+* bot PRs bypass the CI gate unconditionally (upstream curtaincall[#86](https://github.com/chrischall/creditkarma-mcp/issues/86) review) ([#66](https://github.com/chrischall/creditkarma-mcp/issues/66)) ([50f1388](https://github.com/chrischall/creditkarma-mcp/commit/50f1388c9860c8f9edcdb1284aa4aa77075dd6a7))
+
+
+### Documentation
+
+* add MIT LICENSE file and README badges ([#64](https://github.com/chrischall/creditkarma-mcp/issues/64)) ([4e817a1](https://github.com/chrischall/creditkarma-mcp/commit/4e817a1aef523d131b8b7469e306e58e172e1488))
+* correct release flow to describe release-please ([#62](https://github.com/chrischall/creditkarma-mcp/issues/62)) ([6dd0e3c](https://github.com/chrischall/creditkarma-mcp/commit/6dd0e3c39ff6cb53ebab83ad2b5f3b9079c27456))
+
 ## [2.2.2](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.1...v2.2.2) (2026-06-04)
 
 

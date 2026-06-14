@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.4](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.3...v2.2.4) (2026-06-14)
+
+
+### Documentation
+
+* require Conventional Commit PR titles for release-please ([#70](https://github.com/chrischall/creditkarma-mcp/issues/70)) ([2c045b5](https://github.com/chrischall/creditkarma-mcp/commit/2c045b53cf644d1f96e4174c719dc671130e9130))
+
 ## [2.2.3](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.2...v2.2.3) (2026-06-13)
 
 

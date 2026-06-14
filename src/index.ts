@@ -61,7 +61,7 @@ async function main() {
 
   await runMcp({
     name: 'creditkarma-mcp',
-    version: '2.2.3', // x-release-please-version
+    version: '2.2.4', // x-release-please-version
     deps: ctx,
     tools: [
       registerAuthTools,

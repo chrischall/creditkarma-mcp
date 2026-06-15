@@ -104,10 +104,10 @@ The **PR title MUST be a Conventional Commit**, written user-facing (`fix(scope)
 
 **Don't run `gh pr merge` yourself.** The automation does it:
 
-1. `pr-auto-review.yml` runs a Claude review on every PR **except** the release-please release PR (which it deliberately skips). On a `pass` verdict it adds the `ready-to-merge` label.
+1. `pr-auto-review.yml` runs a Claude review on every PR **except** the release-please release PR (which it deliberately skips). On a `pass` **or** `warn` verdict it adds the `ready-to-merge` label; `warn` and `fail` also open/update an `auto-review-followup` issue capturing the findings. Only `fail` blocks the merge.
 2. `auto-merge.yml`, on the `ready-to-merge` label (or on a dependabot PR), arms `gh pr merge --auto --squash`. The moment CI is green the PR squash-merges itself.
 
-For ordinary feature/fix PRs, opening with `gh pr create --label <label>` (or `--label ignore-for-release` for chores not worth a release-notes line) is the whole job. If Claude's verdict was `warn`/`fail` but you've decided to ship anyway, add the label yourself: `gh pr edit <num> --add-label ready-to-merge`.
+For ordinary feature/fix PRs, opening with `gh pr create --label <label>` (or `--label ignore-for-release` for chores not worth a release-notes line) is the whole job. `pass`/`warn` arm auto-merge for you; if Claude's verdict was `fail` but you've decided to ship anyway, add the label yourself: `gh pr edit <num> --add-label ready-to-merge`.
 
 ### PR timing — only open when the feature is done
 
@@ -121,6 +121,19 @@ Because PRs auto-merge as soon as auto-review passes, **do not open a PR until t
 **Release PRs are the one manual touch.** release-please opens its own release PR and leaves it open as your staging artifact — `pr-auto-review.yml` skips it on purpose, so it sits there accumulating changes until you decide to ship. When you're ready, add `ready-to-merge` to it the same way: `gh pr edit <num> --add-label ready-to-merge`. The `auto-merge.yml` arm then takes over and the publish job fires the moment the release PR lands.
 
 The repo allows squash-merge only — `--merge` and `--rebase` are blocked at the branch-protection ruleset level.
+
+### Auto-review follow-up issues
+
+When a PR's auto-review verdict is `warn` or `fail`, the `chrischall/workflows` pipeline opens or updates a single `auto-review-followup` issue ("Auto-review follow-ups for PR #N") whose checklist captures every finding, and links it from the PR's `<!-- auto-review-verdict -->` comment (`📋 Tracking follow-ups: #N`). `warn` (nits only) still auto-merges — the issue carries the nits forward, so most nits are fixed in a *later* PR; `fail` blocks until the important findings are addressed on the PR itself.
+
+When asked to address the auto-review comments / review findings on a PR:
+
+1. Read the verdict comment, open the linked `auto-review-followup` issue, and treat its checklist as the work list (alongside any inline review comments).
+2. Resolve each item, checking off only what you've **verified** is genuinely fixed.
+3. If every item is resolved on the current PR, add `Closes #<issue>` to that PR's body so the merge closes it; if some are deferred, check off only the resolved ones and leave the issue open.
+4. For nits whose `warn` PR already auto-merged, address them in a follow-up PR that references `Closes #<issue>`.
+
+(Mirrors the fleet-wide convention in `~/.claude/CLAUDE.md`.)
 
 ## Publishing constraints
 
@@ -142,7 +155,7 @@ Version appears in SEVEN places — all must match:
 4. `manifest.json` → `"version"`
 5. `server.json` → `"version"` and `packages[].version` (two entries)
 6. `.claude-plugin/plugin.json` → `"version"`
-7. `.claude-plugin/marketplace.json` → `plugins[].version` (and outer `version`)
+7. `.claude-plugin/marketplace.json` → `plugins[].version` and `metadata.version`
 
 ### Release flow
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.4](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.3...v2.2.4) (2026-06-15)
+
+
+### Documentation
+
+* audit CLAUDE.md and add auto-review follow-up convention ([#74](https://github.com/chrischall/creditkarma-mcp/issues/74)) ([c674472](https://github.com/chrischall/creditkarma-mcp/commit/c6744729eb4a23f228ce9c575b0ea58ef101b412))
+* require Conventional Commit PR titles for release-please ([#70](https://github.com/chrischall/creditkarma-mcp/issues/70)) ([2c045b5](https://github.com/chrischall/creditkarma-mcp/commit/2c045b53cf644d1f96e4174c719dc671130e9130))
+
 ## [2.2.3](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.2...v2.2.3) (2026-06-13)
 
 

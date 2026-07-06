@@ -16,7 +16,7 @@ vi.mock('@fetchproxy/bootstrap', () => ({
   bootstrap: (...args: unknown[]) => bootstrapMock(...args),
 }))
 
-import { resolveAuth, parseCookieHeader, loadAuthIntoClient } from '../src/auth.js'
+import { resolveAuth, splitCkatCookie, loadAuthIntoClient } from '../src/auth.js'
 import { CreditKarmaClient } from '../src/client.js'
 
 describe('resolveAuth', () => {
@@ -237,37 +237,37 @@ describe('resolveAuth', () => {
   })
 })
 
-describe('parseCookieHeader', () => {
+describe('splitCkatCookie', () => {
   it('extracts access + refresh JWTs from a full Cookie header', () => {
-    expect(parseCookieHeader('OTHER=x; CKAT=acc%3Bref; foo=bar')).toEqual({
+    expect(splitCkatCookie('OTHER=x; CKAT=acc%3Bref; foo=bar')).toEqual({
       accessToken: 'acc',
       refreshToken: 'ref',
     })
   })
 
   it('accepts a bare CKAT=<value> input', () => {
-    expect(parseCookieHeader('CKAT=acc%3Bref')).toEqual({
+    expect(splitCkatCookie('CKAT=acc%3Bref')).toEqual({
       accessToken: 'acc',
       refreshToken: 'ref',
     })
   })
 
   it('accepts a raw CKAT value with a literal semicolon', () => {
-    expect(parseCookieHeader('acc;ref')).toEqual({
+    expect(splitCkatCookie('acc;ref')).toEqual({
       accessToken: 'acc',
       refreshToken: 'ref',
     })
   })
 
   it('returns nulls for an empty input', () => {
-    expect(parseCookieHeader('')).toEqual({
+    expect(splitCkatCookie('')).toEqual({
       accessToken: null,
       refreshToken: null,
     })
   })
 
   it('returns null refresh token when only one part is present', () => {
-    expect(parseCookieHeader('CKAT=acc-only')).toEqual({
+    expect(splitCkatCookie('CKAT=acc-only')).toEqual({
       accessToken: 'acc-only',
       refreshToken: null,
     })

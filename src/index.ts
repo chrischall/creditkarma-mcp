@@ -1,8 +1,8 @@
-import { readEnvVar, loadDotenvSafely, runMcp } from '@chrischall/mcp-utils'
+import { readEnvVar, loadDotenvSafely, runMcp, parseCookieHeader } from '@chrischall/mcp-utils'
 import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { CreditKarmaClient, extractCookieValue, warnIfRefreshTokenExpired } from './client.js'
+import { CreditKarmaClient, warnIfRefreshTokenExpired } from './client.js'
 import { initDb, backfillAccountIds } from './db.js'
 import type { Database } from './db.js'
 
@@ -35,7 +35,7 @@ async function main() {
   let token: string | undefined
   let refreshToken: string | undefined
   if (cookies) {
-    const ckat = extractCookieValue(cookies, 'CKAT') ?? cookies.trim()
+    const ckat = parseCookieHeader(cookies)['CKAT'] ?? cookies.trim()
     const parts = ckat.replace('%3B', ';').split(';')
     token = parts[0]?.trim() || undefined
     refreshToken = parts[1]?.trim() || undefined

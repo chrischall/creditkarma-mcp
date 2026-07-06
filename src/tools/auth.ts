@@ -1,10 +1,10 @@
 import { z } from 'zod'
-import { rawTextResult } from '@chrischall/mcp-utils'
+import { rawTextResult, parseCookieHeader } from '@chrischall/mcp-utils'
 import { readFileSync, writeFileSync, existsSync, chmodSync } from 'fs'
 import { join, dirname } from 'path'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AppContext } from '../index.js'
-import { isJwtExpired, extractCookieValue } from '../client.js'
+import { isJwtExpired } from '../client.js'
 
 export interface SetSessionArgs {
   /** Full Cookie header string from any CK network request */
@@ -16,7 +16,7 @@ export async function handleSetSession(args: SetSessionArgs, ctx: AppContext): P
   // request (`CKTRKID=...; CKAT=eyJ...%3BeyJ...; ...`). The parser remains
   // lenient and also accepts a bare CKAT value or `CKAT=<value>` for callers
   // that lifted just the cookie value from DevTools.
-  const ckat = extractCookieValue(args.cookies, 'CKAT') ?? args.cookies.trim()
+  const ckat = parseCookieHeader(args.cookies)['CKAT'] ?? args.cookies.trim()
 
   const parts = ckat.replace('%3B', ';').split(';')
   const accessToken = parts[0]?.trim()

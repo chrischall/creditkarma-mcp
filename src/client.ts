@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
-import { truncateErrorMessage } from '@chrischall/mcp-utils'
+import { truncateErrorMessage, decodeJwtClaim, parseCookieHeader } from '@chrischall/mcp-utils'
 import { TokenManager } from '@chrischall/mcp-utils/session'
 
 const TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
@@ -210,10 +210,10 @@ export class CreditKarmaClient {
     if (this.token) {
       headers['authorization'] = `Bearer ${this.token}`
       // Extract glid from JWT for ck-trace-id
-      const glid = extractGlidFromJwt(this.token)
-      if (glid) headers['ck-trace-id'] = glid
+      const glid = decodeJwtClaim(this.token, 'glid')
+      if (typeof glid === 'string') headers['ck-trace-id'] = glid
       // Extract CKTRKID cookie for ck-cookie-id
-      const cookieId = extractCookieValue(this.cookies ?? '', 'CKTRKID')
+      const cookieId = parseCookieHeader(this.cookies ?? '')['CKTRKID'] ?? null
       if (cookieId) headers['ck-cookie-id'] = cookieId
     }
 
@@ -261,24 +261,13 @@ export class CreditKarmaClient {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Decode the unverified JWT payload claims. Returns null if the token is not
- *  a well-formed JWT. We never use this for authorization — only for reading
- *  claims (exp, glid) on tokens we already trust. */
-export function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()) as Record<string, unknown>
-  } catch {
-    return null
-  }
-}
-
 /** True only if we can decode the JWT and its `exp` claim is in the past.
  *  Returns false for un-decodable strings (let the API decide) or tokens
- *  without an `exp` claim. */
+ *  without an `exp` claim — deliberately lenient, unlike mcp-utils'
+ *  fail-closed `validateJwtExpiry`. */
 export function isJwtExpired(token: string): boolean {
-  const p = decodeJwtPayload(token)
-  if (!p || typeof p.exp !== 'number') return false
-  return p.exp * 1000 < Date.now()
+  const exp = decodeJwtClaim(token, 'exp')
+  return typeof exp === 'number' && exp * 1000 < Date.now()
 }
 
 /**
@@ -291,19 +280,6 @@ export function warnIfRefreshTokenExpired(refreshToken: string | undefined | nul
   if (refreshToken && isJwtExpired(refreshToken)) {
     console.error('[creditkarma-mcp] Warning: refresh token in CK_COOKIES has expired. Sign back into creditkarma.com (with the fetchproxy extension installed) or call ck_set_session with a fresh Cookie header.')
   }
-}
-
-function extractGlidFromJwt(token: string): string | null {
-  const p = decodeJwtPayload(token)
-  const glid = p?.glid
-  return typeof glid === 'string' ? glid : null
-}
-
-/** Parse a single cookie value out of a Cookie header string. Exported so the
- *  auth tool and bootstrap don't each maintain their own copy. */
-export function extractCookieValue(cookieString: string, name: string): string | null {
-  const match = cookieString.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`))
-  return match ? match[1] : null
 }
 
 // ---------------------------------------------------------------------------

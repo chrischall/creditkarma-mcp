@@ -2,8 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   CreditKarmaClient,
   isJwtExpired,
-  decodeJwtPayload,
-  extractCookieValue,
   warnIfRefreshTokenExpired,
   type TransactionPage
 } from '../src/client.js'
@@ -440,19 +438,6 @@ describe('isJwtExpired', () => {
   })
 })
 
-describe('decodeJwtPayload', () => {
-  it('returns the parsed payload for a well-formed JWT', () => {
-    const payload = decodeJwtPayload(makeJwt({ sub: 'me', glid: 'abc' }))
-    expect(payload).toMatchObject({ sub: 'me', glid: 'abc' })
-  })
-
-  it('returns null for non-JWT strings', () => {
-    expect(decodeJwtPayload('')).toBeNull()
-    expect(decodeJwtPayload('no-dots')).toBeNull()
-    expect(decodeJwtPayload('one.two.three')).toBeNull()
-  })
-})
-
 describe('warnIfRefreshTokenExpired', () => {
   let errSpy: ReturnType<typeof vi.spyOn>
   beforeEach(() => { errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}) })
@@ -512,20 +497,6 @@ describe('CreditKarmaClient — concurrent refresh deduplication', () => {
     await c.refreshAccessToken()
 
     expect(spy).toHaveBeenCalledTimes(2)
-  })
-})
-
-describe('extractCookieValue', () => {
-  it('returns the value of a named cookie from a Cookie header', () => {
-    expect(extractCookieValue('CKTRKID=abc; CKAT=xyz', 'CKAT')).toBe('xyz')
-  })
-
-  it('returns null when the cookie is absent', () => {
-    expect(extractCookieValue('OTHER=x', 'CKAT')).toBeNull()
-  })
-
-  it('handles cookies at the start of the header', () => {
-    expect(extractCookieValue('CKAT=v; OTHER=x', 'CKAT')).toBe('v')
   })
 })
 

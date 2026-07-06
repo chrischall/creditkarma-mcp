@@ -60,9 +60,9 @@
 
 import { bootstrap } from '@fetchproxy/bootstrap'
 import { classifyBridgeError, FetchproxyBridgeDownError } from '@chrischall/mcp-utils/fetchproxy'
-import { readEnvVar, parseBoolEnv } from '@chrischall/mcp-utils'
+import { readEnvVar, parseBoolEnv, parseCookieHeader } from '@chrischall/mcp-utils'
 import pkg from '../package.json' with { type: 'json' }
-import { CreditKarmaClient, extractCookieValue } from './client.js'
+import { CreditKarmaClient } from './client.js'
 
 /** Result of resolving CK auth, regardless of which path was taken. */
 export interface ResolvedAuth {
@@ -179,21 +179,22 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
 }
 
 /**
- * Parse a Cookie header into the CK_COOKIES → (accessToken, refreshToken)
+ * Split a Cookie header into the CK_COOKIES → (accessToken, refreshToken)
  * shape, mirroring `src/index.ts` and `src/tools/auth.ts`. The CKAT cookie
  * value is `<accessJWT>%3B<refreshJWT>` URL-encoded; we split on either
- * the encoded or literal semicolon.
+ * the encoded or literal semicolon. (CK-specific — the generic name→value
+ * parse is mcp-utils' `parseCookieHeader`.)
  *
  * Exported so both `src/index.ts` (startup) and `loadAuthIntoClient()`
  * (lazy bootstrap) can share one parser. Returns nulls (not errors) when
  * the input doesn't contain a CKAT — the caller decides whether absence
  * is fatal.
  */
-export function parseCookieHeader(cookies: string): {
+export function splitCkatCookie(cookies: string): {
   accessToken: string | null
   refreshToken: string | null
 } {
-  const ckat = extractCookieValue(cookies, 'CKAT') ?? cookies.trim()
+  const ckat = parseCookieHeader(cookies)['CKAT'] ?? cookies.trim()
   const parts = ckat.replace('%3B', ';').split(';')
   const accessToken = parts[0]?.trim() || null
   const refreshToken = parts[1]?.trim() || null
@@ -215,7 +216,7 @@ export function parseCookieHeader(cookies: string): {
  */
 export async function loadAuthIntoClient(client: CreditKarmaClient): Promise<void> {
   const { cookies } = await resolveAuth()
-  const { accessToken, refreshToken } = parseCookieHeader(cookies)
+  const { accessToken, refreshToken } = splitCkatCookie(cookies)
   if (!accessToken) {
     throw new Error('CK auth: resolved cookies did not contain a CKAT token.')
   }

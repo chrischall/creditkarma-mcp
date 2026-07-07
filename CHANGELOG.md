@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.2.5](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.4...v2.2.5) (2026-07-07)
+
+
+### Bug Fixes
+
+* bump @chrischall/mcp-utils to 0.12.0 ([#86](https://github.com/chrischall/creditkarma-mcp/issues/86)) ([2f4fe89](https://github.com/chrischall/creditkarma-mcp/commit/2f4fe89de19867cf63baef1bad4e97a95313cf23))
+
+
+### Refactor
+
+* adopt mcp-utils JWT and cookie-header helpers ([#83](https://github.com/chrischall/creditkarma-mcp/issues/83)) ([3b17022](https://github.com/chrischall/creditkarma-mcp/commit/3b17022ce5343e981a9324b91cd4197eb132b522))
+
 ## [2.2.4](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.3...v2.2.4) (2026-06-15)
 
 

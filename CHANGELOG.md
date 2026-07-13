@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.3.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.5...v2.3.0) (2026-07-13)
+
+
+### Features
+
+* **skill:** add creditkarma fpx access skill ([#90](https://github.com/chrischall/creditkarma-mcp/issues/90)) ([e7eb7e8](https://github.com/chrischall/creditkarma-mcp/commit/e7eb7e80711c64bfe70d953857e999bf06d99491))
+
+
+### Bug Fixes
+
+* **skill:** add extensions.code fallback to auth-error jq check ([#94](https://github.com/chrischall/creditkarma-mcp/issues/94)) ([98c3a36](https://github.com/chrischall/creditkarma-mcp/commit/98c3a369a7ac37456c08da5237493676eca43abe))
+
+
+### Refactor
+
+* **skill:** move root SKILL.md into skills/, point plugin.json at ./skills/ ([#93](https://github.com/chrischall/creditkarma-mcp/issues/93)) ([a398ce7](https://github.com/chrischall/creditkarma-mcp/commit/a398ce7f9b4bf38c847ca42a3b0bdd6aa361a9d5))
+
 ## [2.2.5](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.4...v2.2.5) (2026-07-07)
 
 

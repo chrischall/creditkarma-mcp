@@ -73,7 +73,9 @@ Tests live in `tests/`. Run with `npm test`. No real API calls — client is moc
 .claude-plugin/
   plugin.json       # Claude Code plugin manifest (MCP server config + skill reference)
   marketplace.json  # Marketplace catalog entry
-SKILL.md            # Claude Code skill — teaches Claude when/how to use the tools
+skills/
+  creditkarma/SKILL.md      # Claude Code skill — teaches Claude when/how to use the tools
+  creditkarma-fpx/SKILL.md  # fetchproxy CLI access skill
 ```
 
 <!-- pr-workflow:v2 -->

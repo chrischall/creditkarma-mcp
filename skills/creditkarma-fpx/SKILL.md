@@ -92,7 +92,7 @@ Credit Karma's *primary* expired-token signal is an HTTP-200 body carrying an
 `errorCode` — not an HTTP 401. Always check before trusting the payload:
 
 ```sh
-jq -r '.errorCode // (.errors[]?.errorCode) // (.errors[]?.code) // empty' response.json
+jq -r '.errorCode // (.errors[]?.errorCode) // (.errors[]?.code) // (.errors[]?.extensions.code) // empty' response.json
 ```
 
 If that value matches `UNAUTHENTICATED|UNAUTHORIZED|TOKEN_EXPIRED|401`

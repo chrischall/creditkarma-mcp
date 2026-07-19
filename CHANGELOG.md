@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.1](https://github.com/chrischall/creditkarma-mcp/compare/v2.3.0...v2.3.1) (2026-07-19)
+
+
+### Documentation
+
+* replace duplicated fleet policy with a pointer ([#95](https://github.com/chrischall/creditkarma-mcp/issues/95)) ([ed57831](https://github.com/chrischall/creditkarma-mcp/commit/ed57831c4c2fe9a8a7f1881b9ecea190d3e7f852))
+
 ## [2.3.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.2.5...v2.3.0) (2026-07-13)
 
 

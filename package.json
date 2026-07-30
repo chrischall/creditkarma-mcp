@@ -2,7 +2,7 @@
   "name": "creditkarma-mcp",
   "version": "2.3.1",
   "mcpName": "io.github.chrischall/creditkarma-mcp",
-  "description": "MCP server for Credit Karma — natural-language access to your transactions, spending, and accounts",
+  "description": "MCP server for Credit Karma \u2014 natural-language access to your transactions, spending, and accounts",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
   "repository": {
     "type": "git",
@@ -44,9 +44,9 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@chrischall/mcp-utils": "^0.13.0",
-    "@fetchproxy/bootstrap": "^1.0.0",
-    "@fetchproxy/server": "^1.0.0",
+    "@chrischall/mcp-utils": "^0.14.0",
+    "@fetchproxy/bootstrap": "^1.7.0",
+    "@fetchproxy/server": "^1.7.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.4.2",
     "zod": "^4.4.3"

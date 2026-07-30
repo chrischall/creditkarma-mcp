@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.2](https://github.com/chrischall/creditkarma-mcp/compare/v2.3.1...v2.3.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* **deps:** bump @fetchproxy/* to 1.7.0 and @chrischall/mcp-utils to 0.14.0 ([#104](https://github.com/chrischall/creditkarma-mcp/issues/104)) ([92a0b43](https://github.com/chrischall/creditkarma-mcp/commit/92a0b432d4793f796c1c2b4a45a1f51a6b578265))
+
 ## [2.3.1](https://github.com/chrischall/creditkarma-mcp/compare/v2.3.0...v2.3.1) (2026-07-19)
 
 

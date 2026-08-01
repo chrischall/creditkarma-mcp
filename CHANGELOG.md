@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.3](https://github.com/chrischall/creditkarma-mcp/compare/v2.3.2...v2.3.3) (2026-08-01)
+
+
+### Bug Fixes
+
+* **auth:** re-read browser cookies when the cached refresh token expires ([#107](https://github.com/chrischall/creditkarma-mcp/issues/107)) ([2381fc4](https://github.com/chrischall/creditkarma-mcp/commit/2381fc484ca3cf2c20ce53674b011541fee33835))
+* **sync:** retry Credit Karma's flaky "No query found" gateway 400 ([#108](https://github.com/chrischall/creditkarma-mcp/issues/108)) ([b5ce9d2](https://github.com/chrischall/creditkarma-mcp/commit/b5ce9d273fabdae7bc7a6ac384729fd080d3d7b3))
+
 ## [2.3.2](https://github.com/chrischall/creditkarma-mcp/compare/v2.3.1...v2.3.2) (2026-07-30)
 
 

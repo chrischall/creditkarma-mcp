@@ -6,6 +6,33 @@ import { TokenManager } from '@chrischall/mcp-utils/session'
 import { CkAuthError } from './authError.js'
 
 const TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
+
+/** Pause before the single post-429 replay. */
+const RATE_LIMIT_BACKOFF_MS = 2000
+
+/**
+ * Total attempts allowed for one page when CK's gateway keeps answering
+ * `No query found`.
+ *
+ * Sized from the measured per-request failure rate of ~44% (2026-08-01, 16
+ * live POSTs). Attempts fail close to independently, so residual per-page risk
+ * is ~0.44^n: 3 attempts leaves ~8.5%, which compounds badly across a
+ * multi-page sync (~58% chance of losing a 10-page run). Six attempts brings it
+ * to ~0.7% per page — ~93% for that same 10-page sync. The cap still bounds the
+ * work: a page that is genuinely broken costs six tries and ~5s, then fails
+ * loudly (and `ck_sync_transactions` checkpoints `last_cursor` so the next run
+ * resumes).
+ */
+export const NO_QUERY_FOUND_ATTEMPTS = 6
+
+/**
+ * Backoff before each retry; one entry per retry (attempts − 1).
+ *
+ * Deliberately modest: the failure is NOT rate-driven (250ms vs 3s pacing made
+ * no difference), so a long backoff would buy latency and no extra reliability.
+ * These delays exist to avoid a tight hammer loop, not to wait out a throttle.
+ */
+export const NO_QUERY_FOUND_BACKOFF_MS = [300, 600, 1000, 1500, 2000]
 export const GRAPHQL_ENDPOINT = 'https://api.creditkarma.com/graphql'
 export const CK_REFRESH_ENDPOINT = 'https://www.creditkarma.com/member/oauth2/refresh'
 
@@ -154,24 +181,47 @@ export class CreditKarmaClient {
       })
   }
 
-  /** Fetch a single page of transactions. Throws TOKEN_EXPIRED on 401. */
+  /**
+   * Fetch a single page of transactions. Throws TOKEN_EXPIRED on 401.
+   *
+   * Wrapped in a bounded retry for CK's flaky `No query found` gateway
+   * rejection (see {@link isNoQueryFound}) — that one signature only, so real
+   * 400s still fail fast on the first attempt.
+   */
   async fetchPage(afterCursor?: string): Promise<TransactionPage> {
     if (!this.token) throw new Error('TOKEN_EXPIRED')
 
-    const response = await this.graphqlPost(buildVariables(afterCursor))
+    for (let attempt = 1; ; attempt++) {
+      let response = await this.graphqlPost(buildVariables(afterCursor))
 
-    if (response.status === 401) throw new Error('TOKEN_EXPIRED')
+      if (response.status === 401) throw new Error('TOKEN_EXPIRED')
 
-    if (response.status === 429) {
-      await sleep(2000)
-      const retry = await this.graphqlPost(buildVariables(afterCursor))
-      if (retry.status === 401) throw new Error('TOKEN_EXPIRED')
-      if (!retry.ok) throw new Error(await httpErrorMessage(retry))
-      return parseTransactionPage(await retry.json())
+      if (response.status === 429) {
+        await sleep(RATE_LIMIT_BACKOFF_MS)
+        response = await this.graphqlPost(buildVariables(afterCursor))
+        if (response.status === 401) throw new Error('TOKEN_EXPIRED')
+      }
+
+      if (response.ok) return parseTransactionPage(await response.json())
+
+      // Body is read once here: `Response` bodies are single-use, so the
+      // retry check and the error message share this one read.
+      const body = await readBodyOrEmpty(response)
+
+      if (isNoQueryFound(response.status, body)) {
+        if (attempt < NO_QUERY_FOUND_ATTEMPTS) {
+          await sleep(NO_QUERY_FOUND_BACKOFF_MS[attempt - 1])
+          continue
+        }
+        throw new Error(
+          `GraphQL gateway rejected the request with "No query found" on all ` +
+            `${NO_QUERY_FOUND_ATTEMPTS} attempts (HTTP ${response.status}). This is an upstream ` +
+            `Credit Karma fault, not a problem with the query — retry the sync.`,
+        )
+      }
+
+      throw new Error(httpErrorMessage(response.status, body))
     }
-
-    if (!response.ok) throw new Error(await httpErrorMessage(response))
-    return parseTransactionPage(await response.json())
   }
 
   /**
@@ -384,19 +434,47 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+/** Read a response body, degrading to '' on any failure (broken stream, or a
+ *  stubbed Response without `.text`). Split out from {@link httpErrorMessage}
+ *  because `fetchPage` needs the body BEFORE it knows whether this is a
+ *  retryable gateway blip or a real error — and a body can only be read once. */
+async function readBodyOrEmpty(res: Response): Promise<string> {
+  try {
+    return typeof res.text === 'function' ? await res.text() : ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Credit Karma's GraphQL gateway intermittently rejects well-formed requests
+ * with `HTTP 400 {"message":"No query found"}`.
+ *
+ * Measured 2026-08-01 against a live account, this is NOT about the request:
+ * a 25-byte `query Ping { __typename }` fails at the same rate as the 98KB
+ * transaction query, ad-hoc queries execute fine (so the gateway is not
+ * persisted-query-only, despite the APQ-flavoured wording), and neither the
+ * `ck-*` client headers, session/Akamai cookies, nor request pacing moved the
+ * needle. Successes and failures both reach the origin with identical headers
+ * apart from `connection: close` on the failure. From the client's side it is
+ * simply non-deterministic, so the only available mitigation is to retry.
+ *
+ * Matched narrowly — status AND the exact `message` value — so a genuine 400
+ * (syntax error, schema drift) is never silently retried. The regex requires
+ * the phrase to be the `message` field's value rather than incidental text
+ * elsewhere in some other payload.
+ */
+export function isNoQueryFound(status: number, body: string): boolean {
+  return status === 400 && /"message"\s*:\s*"No query found"/.test(body)
+}
+
 /**
  * Build an `HTTP <status>: <body>` error message for a failed GraphQL response,
  * attaching the upstream body (redacted + length-capped via mcp-utils'
  * `truncateErrorMessage`) so failures are debuggable instead of a bare status.
- * Falls back to just the status when the body can't be read.
+ * Falls back to just the status when the body is empty or unreadable.
  */
-async function httpErrorMessage(res: Response): Promise<string> {
-  let body = ''
-  try {
-    body = typeof res.text === 'function' ? await res.text() : ''
-  } catch {
-    body = ''
-  }
+function httpErrorMessage(status: number, body: string): string {
   const safe = truncateErrorMessage(body, 200).trim()
-  return safe.length > 0 ? `HTTP ${res.status}: ${safe}` : `HTTP ${res.status}`
+  return safe.length > 0 ? `HTTP ${status}: ${safe}` : `HTTP ${status}`
 }

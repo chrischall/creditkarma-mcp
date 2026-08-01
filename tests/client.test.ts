@@ -5,6 +5,7 @@ import {
   warnIfRefreshTokenExpired,
   type TransactionPage
 } from '../src/client.js'
+import { CkAuthError, isCkAuthError } from '../src/authError.js'
 import { makeJwt } from './helpers.js'
 
 describe('CreditKarmaClient — token management', () => {
@@ -323,6 +324,26 @@ describe('CreditKarmaClient — refresh token', () => {
       })
     )
     await expect(c.refreshAccessToken()).rejects.toThrow(/refresh token/i)
+  })
+
+  it('refreshAccessToken throws a typed session_rejected error carrying the status', async () => {
+    // A rejection from CK must be machine-distinguishable from "we never had
+    // credentials to send" — refreshOrThrow branches on exactly this, and the
+    // operator reading the message needs to know which of the two happened.
+    const c = new CreditKarmaClient('tok', 'ref')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response('<!DOCTYPE html><html>error</html>', {
+        status: 400,
+        headers: { 'content-type': 'text/html' }
+      })
+    )
+    const err = await c.refreshAccessToken().then(() => null, (e: unknown) => e)
+
+    expect(isCkAuthError(err, 'session_rejected')).toBe(true)
+    expect((err as CkAuthError).status).toBe(400)
+    expect((err as CkAuthError).message).toMatch(/session rejected/i)
+    // ...and must NOT read like the "extension couldn't read cookies" failure.
+    expect((err as CkAuthError).message).not.toMatch(/no credentials readable/i)
   })
 
   it('refreshAccessToken labels empty body as "(empty body)" in the error', async () => {

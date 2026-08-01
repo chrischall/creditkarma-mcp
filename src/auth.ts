@@ -62,7 +62,8 @@ import { bootstrap } from '@fetchproxy/bootstrap'
 import { classifyBridgeError, FetchproxyBridgeDownError } from '@chrischall/mcp-utils/fetchproxy'
 import { readEnvVar, parseBoolEnv, parseCookieHeader } from '@chrischall/mcp-utils'
 import pkg from '../package.json' with { type: 'json' }
-import { CreditKarmaClient } from './client.js'
+import { CreditKarmaClient, isJwtExpired } from './client.js'
+import { CkAuthError } from './authError.js'
 
 /** Result of resolving CK auth, regardless of which path was taken. */
 export interface ResolvedAuth {
@@ -128,13 +129,15 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
       const ckat = session.cookies['CKAT']
       const cktrkid = session.cookies['CKTRKID']
       if (!ckat) {
-        throw new Error(
+        throw new CkAuthError(
+          'no_credentials',
           'CKAT cookie missing on creditkarma.com. ' +
             'Sign into creditkarma.com in your browser (with the fetchproxy extension installed) and retry.',
         )
       }
       if (!cktrkid) {
-        throw new Error(
+        throw new CkAuthError(
+          'no_credentials',
           'CKTRKID cookie missing on creditkarma.com. ' +
             'Sign into creditkarma.com in your browser (with the fetchproxy extension installed) and retry.',
         )
@@ -157,21 +160,28 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
       // the same self-service guidance as path 4.
       if (classifyBridgeError(e) === 'bridge_down') {
         const downErr = e as FetchproxyBridgeDownError
+        // Deliberately NOT a CkAuthError: a sleeping service worker is an
+        // infrastructure failure, not a statement about the user's session.
+        // Tagging it `no_credentials` would send them to re-sign-in when the
+        // fix is to wake the extension.
         throw new Error(
           `CK auth: fetchproxy bridge is down (extension service worker unreachable after retry). ${downErr.hint}`,
         )
       }
       const msg = e instanceof Error ? e.message : String(e)
-      throw new Error(
-        `CK auth: no CK_COOKIES set, and fetchproxy fallback failed: ${msg}`,
-      )
+      const wrapped = `CK auth: no credentials readable — no CK_COOKIES set, and fetchproxy fallback failed: ${msg}`
+      // Preserve the reason when the inner throw already classified itself
+      // (the CKAT/CKTRKID-missing branches above); anything else that escaped
+      // bootstrap is an unknown failure and stays an untyped Error.
+      throw e instanceof CkAuthError ? new CkAuthError(e.reason, wrapped) : new Error(wrapped)
     }
   }
 
   // ── Path 4: nothing configured. Surface all three fixes side-by-side so
   //    the user can pick whichever fits their setup.
-  throw new Error(
-    'CK auth: set CK_COOKIES, ' +
+  throw new CkAuthError(
+    'no_credentials',
+    'CK auth: no credentials readable — set CK_COOKIES, ' +
       'or call the ck_set_session MCP tool with a Cookie header, ' +
       'or install the fetchproxy extension and sign into creditkarma.com ' +
       '(unset CK_DISABLE_FETCHPROXY if it is set).',
@@ -218,7 +228,21 @@ export async function loadAuthIntoClient(client: CreditKarmaClient): Promise<voi
   const { cookies } = await resolveAuth()
   const { accessToken, refreshToken } = splitCkatCookie(cookies)
   if (!accessToken) {
-    throw new Error('CK auth: resolved cookies did not contain a CKAT token.')
+    throw new CkAuthError(
+      'no_credentials',
+      'CK auth: no credentials readable — resolved cookies did not contain a CKAT token.',
+    )
+  }
+  // A readable-but-dead refresh JWT is its own failure mode. Catching it here
+  // — before the POST — means the user is told to sign in rather than shown a
+  // Credit Karma HTML error page relayed as an opaque HTTP 400.
+  if (refreshToken && isJwtExpired(refreshToken)) {
+    throw new CkAuthError(
+      'session_stale',
+      'CK auth: session stale — the refresh token in your creditkarma.com cookies has expired ' +
+        '(they last ~8 hours). Sign back into creditkarma.com so the fetchproxy extension can ' +
+        're-read fresh cookies, or paste a fresh Cookie header via ck_set_session.',
+    )
   }
   client.setToken(accessToken)
   if (refreshToken) client.setRefreshToken(refreshToken)

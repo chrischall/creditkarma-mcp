@@ -8,6 +8,8 @@ import {
 } from '../db.js'
 import { deriveAccountId } from '../accountId.js'
 import { loadAuthIntoClient } from '../auth.js'
+import { isJwtExpired } from '../client.js'
+import { isCkAuthError } from '../authError.js'
 
 export interface SyncArgs {
   force_full?: boolean
@@ -165,20 +167,39 @@ export async function handleSyncTransactions(
 }
 
 async function refreshOrThrow(ctx: AppContext): Promise<void> {
-  // No cached refresh token → either CK_COOKIES wasn't set at startup AND
-  // ck_set_session was never called, OR the user is on the fetchproxy path
-  // and we need to lift the session out of the browser. Either way, defer
-  // to loadAuthIntoClient() — it picks env-var (fast, no network) or
-  // fetchproxy (one-shot WS bridge) and applies the result to the client.
+  // Go back to the browser (or env) for credentials when the ones we hold are
+  // missing OR provably dead.
   //
-  // Any throw from there is already shaped as a TOKEN_EXPIRED-style
-  // actionable message ("CK auth: set CK_COOKIES, ...") so we let it bubble.
-  if (!ctx.client.getRefreshToken()) {
+  // The "provably dead" half is the fix for a bug that made a long-lived server
+  // unrecoverable: CK's refresh JWT lives ~8 hours, but an MCP server process
+  // lives for days. This used to re-read cookies only when the refresh token
+  // was ABSENT, so once the cached one aged out, every sync POSTed the dead
+  // token and failed with an HTML error page surfaced as "HTTP 400". Signing
+  // back into creditkarma.com — which does put fresh cookies in the browser —
+  // changed nothing, because the process never looked at them again. The only
+  // cure was restarting the server, which is not a thing a user should have to
+  // guess. Checking `exp` locally means a stale token costs one bootstrap
+  // instead of a permanent outage.
+  const cached = ctx.client.getRefreshToken()
+  const reBootstrapped = !cached || isJwtExpired(cached)
+  if (reBootstrapped) {
     await loadAuthIntoClient(ctx.client)
   }
+
   // We may have just loaded a token via fetchproxy (in which case the access
   // JWT inside CKAT could already be ~15-min stale) — refresh once to be sure.
-  await ctx.client.refreshAccessToken()
+  try {
+    await ctx.client.refreshAccessToken()
+  } catch (err) {
+    // The JWT's own `exp` looked fine but CK rejected it anyway — a revoked
+    // session or a rotated device id. Fresh cookies may be sitting in the
+    // browser right now, so lift them and try once more. Only once: if the
+    // credentials we just read are also rejected, the user really does need to
+    // sign in, and retrying would just re-prompt the extension in a loop.
+    if (reBootstrapped || !isCkAuthError(err, 'session_rejected')) throw err
+    await loadAuthIntoClient(ctx.client)
+    await ctx.client.refreshAccessToken()
+  }
 }
 
 function subtractDays(dateStr: string, days: number): string {

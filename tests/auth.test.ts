@@ -18,6 +18,12 @@ vi.mock('@fetchproxy/bootstrap', () => ({
 
 import { resolveAuth, splitCkatCookie, loadAuthIntoClient } from '../src/auth.js'
 import { CreditKarmaClient } from '../src/client.js'
+import { CkAuthError, isCkAuthError } from '../src/authError.js'
+import { makeJwt } from './helpers.js'
+
+/** A refresh JWT whose `exp` is `secondsFromNow` away (negative ⇒ expired). */
+const refreshJwt = (secondsFromNow: number) =>
+  makeJwt({ glid: 'g1', exp: Math.floor(Date.now() / 1000) + secondsFromNow })
 
 describe('resolveAuth', () => {
   let originalCookies: string | undefined
@@ -346,5 +352,100 @@ describe('loadAuthIntoClient', () => {
     const client = new CreditKarmaClient()
 
     await expect(loadAuthIntoClient(client)).rejects.toThrow(/extension offline/)
+  })
+
+  it('rejects with session_stale when the lifted refresh JWT is already expired', async () => {
+    // The browser had cookies, they were readable — they're just dead. That is
+    // a different problem from "the extension couldn't read anything", and the
+    // fix is different too (sign in again vs. install/wake the extension), so
+    // it must not collapse into the same message.
+    bootstrapMock.mockResolvedValue({
+      cookies: { CKAT: `${refreshJwt(600)}%3B${refreshJwt(-60)}`, CKTRKID: 'trk' },
+      localStorage: {},
+      sessionStorage: {},
+      capturedHeaders: {},
+    })
+    const client = new CreditKarmaClient()
+
+    const err = await loadAuthIntoClient(client).then(() => null, (e: unknown) => e)
+
+    expect(isCkAuthError(err, 'session_stale')).toBe(true)
+    expect((err as CkAuthError).message).toMatch(/expired/i)
+    expect((err as CkAuthError).message).toMatch(/sign back into creditkarma\.com/i)
+  })
+
+  it('accepts a lifted refresh JWT that is still valid', async () => {
+    const refresh = refreshJwt(3600)
+    bootstrapMock.mockResolvedValue({
+      cookies: { CKAT: `${refreshJwt(600)}%3B${refresh}`, CKTRKID: 'trk' },
+      localStorage: {},
+      sessionStorage: {},
+      capturedHeaders: {},
+    })
+    const client = new CreditKarmaClient()
+
+    await loadAuthIntoClient(client)
+
+    expect(client.getRefreshToken()).toBe(refresh)
+  })
+})
+
+describe('auth failures are distinguishable by reason', () => {
+  let originalCookies: string | undefined
+  let originalDisable: string | undefined
+
+  beforeEach(() => {
+    originalCookies = process.env.CK_COOKIES
+    originalDisable = process.env.CK_DISABLE_FETCHPROXY
+    delete process.env.CK_COOKIES
+    delete process.env.CK_DISABLE_FETCHPROXY
+    bootstrapMock.mockReset()
+  })
+
+  afterEach(() => {
+    if (originalCookies === undefined) delete process.env.CK_COOKIES
+    else process.env.CK_COOKIES = originalCookies
+    if (originalDisable === undefined) delete process.env.CK_DISABLE_FETCHPROXY
+    else process.env.CK_DISABLE_FETCHPROXY = originalDisable
+  })
+
+  it('tags "extension read no cookies" as no_credentials', async () => {
+    bootstrapMock.mockResolvedValue({
+      cookies: {},
+      localStorage: {},
+      sessionStorage: {},
+      capturedHeaders: {},
+    })
+
+    const err = await resolveAuth().then(() => null, (e: unknown) => e)
+
+    expect(isCkAuthError(err, 'no_credentials')).toBe(true)
+    expect((err as CkAuthError).message).toMatch(/no credentials readable/i)
+  })
+
+  it('tags "nothing configured" as no_credentials', async () => {
+    process.env.CK_DISABLE_FETCHPROXY = '1'
+
+    const err = await resolveAuth().then(() => null, (e: unknown) => e)
+
+    expect(isCkAuthError(err, 'no_credentials')).toBe(true)
+  })
+
+  it('does not tag a bridge-down failure as no_credentials', async () => {
+    // The extension being asleep is an infrastructure problem, not a
+    // credentials one — conflating them sends the user to the wrong fix.
+    const { FetchproxyBridgeDownError } = await import('@fetchproxy/server')
+    bootstrapMock.mockRejectedValue(
+      new FetchproxyBridgeDownError({
+        originalError: 'content_script_unreachable',
+        retryAttempted: true,
+        op: 'fetch',
+      }),
+    )
+
+    const err = await resolveAuth().then(() => null, (e: unknown) => e)
+
+    expect(isCkAuthError(err, 'no_credentials')).toBe(false)
+    expect((err as Error).message).toMatch(/bridge is down/)
   })
 })

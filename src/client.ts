@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
 import { truncateErrorMessage, decodeJwtClaim, parseCookieHeader } from '@chrischall/mcp-utils'
 import { TokenManager } from '@chrischall/mcp-utils/session'
+import { CkAuthError } from './authError.js'
 
 const TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
 export const GRAPHQL_ENDPOINT = 'https://api.creditkarma.com/graphql'
@@ -234,7 +235,16 @@ export class CreditKarmaClient {
         // Redact + cap the upstream body (same treatment as the GraphQL path)
         // so tokens echoed back by CK never reach the tool surface.
         : (truncateErrorMessage(body, 200).trim() || '(empty body)')
-      throw new Error(`Token refresh failed: HTTP ${res.status} — ${detail}`)
+      // `session rejected` is the load-bearing phrase: it says we HAD readable
+      // credentials and Credit Karma turned them down — as opposed to
+      // `no credentials readable`, which means the extension/env gave us
+      // nothing to send. Those two used to be indistinguishable at a glance
+      // and they have different fixes.
+      throw new CkAuthError(
+        'session_rejected',
+        `CK auth: session rejected — Token refresh failed: HTTP ${res.status} — ${detail}`,
+        res.status,
+      )
     }
     const json = await res.json() as { accessToken?: string; refreshToken?: string; error?: string }
     if (json.error || !json.accessToken) throw new Error(`Token refresh error: ${json.error ?? 'no accessToken in response'}`)

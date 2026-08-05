@@ -3,7 +3,30 @@ import { TokenManager } from '@chrischall/mcp-utils/session'
 import { CkAuthError } from './authError.js'
 import * as queryHash from './queryHash.js'
 
+/**
+ * Fallback lifetime assumed for an access token whose real expiry can't be
+ * read. Deliberately shorter than CK's actual ~15 minutes so an undecodable
+ * token errs towards refreshing rather than towards using a dead one.
+ */
 const TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
+
+/**
+ * When the access token actually expires.
+ *
+ * Prefers the JWT's own `exp` over a synthetic window, because the difference
+ * decides whether we POST `/member/oauth2/refresh` — and every one of those
+ * ROTATES CK's refresh token, invalidating the copy in the browser's `CKAT`
+ * cookie and eventually signing the user out of creditkarma.com (#119).
+ * Assuming a 10-minute life for a token that CK gave 15 manufactured needless
+ * rotations; reading `exp` makes the decision honest.
+ *
+ * Falls back to the synthetic window for anything undecodable, so opaque
+ * tokens keep working.
+ */
+function accessTokenExpiry(token: string | null | undefined): number {
+  const exp = token ? decodeJwtClaim(token, 'exp') : undefined
+  return typeof exp === 'number' ? exp * 1000 : Date.now() + TOKEN_TTL_MS
+}
 
 /** Pause before the single post-429 replay. */
 const RATE_LIMIT_BACKOFF_MS = 2000
@@ -128,7 +151,7 @@ export class CreditKarmaClient {
       initial: {
         accessToken: this.token ?? '',
         refreshToken: this.refreshToken ?? undefined,
-        expiresAt: Date.now() + TOKEN_TTL_MS,
+        expiresAt: accessTokenExpiry(this.token),
       },
       // TokenManager only calls this when a refresh token is present (guaranteed
       // by `refreshAccessToken`'s own NO_REFRESH_TOKEN guard / by withAuth only
@@ -141,7 +164,7 @@ export class CreditKarmaClient {
           accessToken,
           // Omit an empty/absent refresh token so the manager keeps the prior one.
           refreshToken: refreshToken || undefined,
-          expiresAt: Date.now() + TOKEN_TTL_MS,
+          expiresAt: accessTokenExpiry(accessToken),
         }
       },
     })

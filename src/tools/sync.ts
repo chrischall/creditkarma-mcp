@@ -85,9 +85,10 @@ export async function handleSyncTransactions(
       page = await ctx.client.fetchPage(cursor)
     } catch (err) {
       if (err instanceof Error && err.message === 'TOKEN_EXPIRED') {
-        // JWT may have expired mid-sync — try refresh once then retry page
+        // CK rejected the token mid-sync, so it is dead regardless of what its
+        // `exp` says — refresh unconditionally here, then retry the page.
         try {
-          await refreshOrThrow(ctx)
+          await refreshOrThrow(ctx, true)
           page = await ctx.client.fetchPage(cursor)
         } catch (retryErr) {
           if (cursor) setSyncState(ctx.db, 'last_cursor', cursor)
@@ -166,7 +167,7 @@ export async function handleSyncTransactions(
   return { new: newCount, updated: updatedCount, total: totalCount, ...(stopped ? { stopped } : {}) }
 }
 
-async function refreshOrThrow(ctx: AppContext): Promise<void> {
+async function refreshOrThrow(ctx: AppContext, tokenKnownDead = false): Promise<void> {
   // Go back to the browser (or env) for credentials when the ones we hold are
   // missing OR provably dead.
   //
@@ -186,8 +187,23 @@ async function refreshOrThrow(ctx: AppContext): Promise<void> {
     await loadAuthIntoClient(ctx.client)
   }
 
-  // We may have just loaded a token via fetchproxy (in which case the access
-  // JWT inside CKAT could already be ~15-min stale) — refresh once to be sure.
+  // Refresh ONLY when the access token is actually spent.
+  //
+  // This used to refresh unconditionally, "to be sure", on the reasoning that a
+  // token just read from CKAT might already be stale. It might — but checking
+  // is free, and refreshing when we didn't need to is not: every
+  // /member/oauth2/refresh ROTATES CK's refresh token, which invalidates the
+  // copy still sitting in the browser's CKAT cookie. The user then gets signed
+  // out of creditkarma.com and told it was "inactivity" (#119). A server that
+  // syncs on a schedule did that on every process start.
+  //
+  // `tokenKnownDead` is the reactive case: CK answered TOKEN_EXPIRED, so the
+  // token is dead no matter what its `exp` claims and the check must not apply.
+  // Proactively, `isTokenExpired()` reads the JWT's own `exp`, so a genuinely
+  // stale cookie still refreshes — and a token that merely *looks* live but CK
+  // rejects comes back through here with `tokenKnownDead` set.
+  if (!tokenKnownDead && !ctx.client.isTokenExpired()) return
+
   try {
     await ctx.client.refreshAccessToken()
   } catch (err) {

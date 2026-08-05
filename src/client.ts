@@ -1,6 +1,7 @@
 import { truncateErrorMessage, decodeJwtClaim, parseCookieHeader } from '@chrischall/mcp-utils'
 import { TokenManager } from '@chrischall/mcp-utils/session'
 import { CkAuthError } from './authError.js'
+import * as queryHash from './queryHash.js'
 
 const TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
 
@@ -44,6 +45,10 @@ export const TRANSACTION_QUERY_HASH =
   '9b5109d15254ad7fc7d18f597b4026422a69bdc48a4be7d43823866a6ea15915'
 
 export const GRAPHQL_ENDPOINT = 'https://api.creditkarma.com/graphql'
+
+/** Sentinel for "the gateway could not resolve our persisted hash" — distinct
+ *  from a page, and not an error, because it has a recovery path. */
+const NO_QUERY_FOUND = Symbol('NO_QUERY_FOUND')
 export const CK_REFRESH_ENDPOINT = 'https://www.creditkarma.com/member/oauth2/refresh'
 
 export interface TransactionPage {
@@ -92,6 +97,16 @@ export class CreditKarmaClient {
    * "now" — matching the old `tokenSetAt = Date.now()` reset.
    */
   private tokens: TokenManager
+
+  /**
+   * Hash actually sent. Starts at the compiled-in {@link TRANSACTION_QUERY_HASH}
+   * and is replaced in-process if CK turns out to have rotated it — so a sync
+   * can heal itself without waiting on a release.
+   */
+  private queryHash: string = TRANSACTION_QUERY_HASH
+
+  /** Guards `rediscoverQueryHash` to one attempt per client. */
+  private hashRediscovered = false
 
   constructor(token?: string, refreshToken?: string, cookies?: string) {
     if (refreshToken) this.refreshToken = refreshToken
@@ -181,7 +196,7 @@ export class CreditKarmaClient {
   private graphqlPost(variables: Record<string, unknown>): Promise<Response> {
     return this.tokens
       .withAuth((accessToken) =>
-        this.post(GRAPHQL_ENDPOINT, buildPersistedRequest(variables), accessToken)
+        this.post(GRAPHQL_ENDPOINT, buildPersistedRequest(variables, this.queryHash), accessToken)
       )
       .catch((err: unknown) => {
         if (err instanceof Error && /no refresh token/i.test(err.message)) {
@@ -194,13 +209,60 @@ export class CreditKarmaClient {
   /**
    * Fetch a single page of transactions. Throws TOKEN_EXPIRED on 401.
    *
-   * `No query found` fails immediately (see {@link isNoQueryFound}): the
-   * gateway either resolves our persisted hash or it never will, so a retry
-   * only adds latency to a certain failure.
+   * `No query found` is never retried as-is — the gateway either resolves our
+   * hash or it never will. But CK rotates hashes on web deploys, so the one
+   * recovery worth attempting is re-reading the current hash from CK's own
+   * bundle and replaying with it. That happens at most once per client.
    */
   async fetchPage(afterCursor?: string): Promise<TransactionPage> {
     if (!this.token) throw new Error('TOKEN_EXPIRED')
 
+    const page = await this.attemptPage(afterCursor)
+    if (page !== NO_QUERY_FOUND) return page
+
+    if (await this.rediscoverQueryHash()) {
+      const replay = await this.attemptPage(afterCursor)
+      if (replay !== NO_QUERY_FOUND) return replay
+    }
+
+    throw new Error(
+      `GraphQL gateway rejected the request with "No query found" (HTTP 400). The ` +
+        `persisted-query hash for ${TRANSACTION_OPERATION_NAME} is not registered, and ` +
+        `re-reading it from Credit Karma's current web bundle did not yield a working ` +
+        `replacement. This is not a session problem, and retrying will not help. Derive the ` +
+        `hash by hand: open a signed-in creditkarma.com page and grep its Next.js chunks for ` +
+        `\`${queryHash.HASH_MANIFEST_MARKER}\`, then update TRANSACTION_QUERY_HASH in ` +
+        `src/client.ts. Already-synced data stays queryable via ck_list_transactions / ` +
+        `ck_query_sql.`,
+    )
+  }
+
+  /**
+   * Re-read the persisted hash from CK's web bundle. Returns true only when it
+   * yields something new that is worth replaying.
+   *
+   * Attempted at most once per client: a second lookup would return the same
+   * answer, so it would only add latency to each remaining page of the sync.
+   * Skipped entirely without cookies — discovery reads a signed-in page, and
+   * logged out CK serves the login bundle, which carries no manifest.
+   */
+  private async rediscoverQueryHash(): Promise<boolean> {
+    if (this.hashRediscovered || !this.cookies) return false
+    this.hashRediscovered = true
+
+    const discovered = await queryHash.discoverQueryHash(TRANSACTION_OPERATION_NAME, this.cookies)
+    if (!discovered || discovered === this.queryHash) return false
+
+    this.queryHash = discovered
+    return true
+  }
+
+  /**
+   * One POST for a page. Returns {@link NO_QUERY_FOUND} for the rotated-hash
+   * signature so the caller can decide whether recovery is worth attempting;
+   * every other failure throws here.
+   */
+  private async attemptPage(afterCursor?: string): Promise<TransactionPage | typeof NO_QUERY_FOUND> {
     let response = await this.graphqlPost(buildVariables(afterCursor))
 
     if (response.status === 401) throw new Error('TOKEN_EXPIRED')
@@ -217,17 +279,7 @@ export class CreditKarmaClient {
     // signature check and the error message share this one read.
     const body = await readBodyOrEmpty(response)
 
-    if (isNoQueryFound(response.status, body)) {
-      throw new Error(
-        `GraphQL gateway rejected the request with "No query found" (HTTP ${response.status}). ` +
-          `The persisted-query hash for ${TRANSACTION_OPERATION_NAME} is no longer registered — ` +
-          `Credit Karma has most likely shipped a web build that rotated it. This is not a ` +
-          `session problem, and retrying will not help. Re-derive the hash: open a signed-in ` +
-          `creditkarma.com page and grep its Next.js chunks for \`usePregeneratedHashes\`, then ` +
-          `update TRANSACTION_QUERY_HASH in src/client.ts. Already-synced data stays queryable ` +
-          `via ck_list_transactions / ck_query_sql.`,
-      )
-    }
+    if (isNoQueryFound(response.status, body)) return NO_QUERY_FOUND
 
     throw new Error(httpErrorMessage(response.status, body))
   }
@@ -367,9 +419,12 @@ export function warnIfRefreshTokenExpired(refreshToken: string | undefined | nul
  * the repo as documentation of the selection set {@link parseTransactionPage}
  * reads, but it is no longer sent — or even loaded — at runtime.
  */
-function buildPersistedRequest(variables: Record<string, unknown>): Record<string, unknown> {
+function buildPersistedRequest(
+  variables: Record<string, unknown>,
+  sha256Hash: string,
+): Record<string, unknown> {
   return {
-    extensions: { persistedQuery: { version: 1, sha256Hash: TRANSACTION_QUERY_HASH } },
+    extensions: { persistedQuery: { version: 1, sha256Hash } },
     operationName: TRANSACTION_OPERATION_NAME,
     variables,
   }

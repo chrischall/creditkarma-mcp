@@ -7,6 +7,7 @@ import {
   TRANSACTION_OPERATION_NAME,
   TRANSACTION_QUERY_HASH,
 } from '../src/client.js'
+import * as queryHash from '../src/queryHash.js'
 
 // Credit Karma's GraphQL gateway answers `HTTP 400 {"message":"No query
 // found"}` when it cannot resolve a request against its safelisted operation
@@ -133,6 +134,96 @@ describe('persisted-query request shape', () => {
     const { headers } = await capture()
 
     expect(headers['Authorization']).toBe('Bearer valid-token')
+  })
+})
+
+describe('fetchPage — recovering from a rotated hash', () => {
+  // CK rotates persisted hashes on web deploys. Rather than fail until someone
+  // ships a new constant, re-read the hash from CK's own bundle and replay —
+  // but only once per client, and only when there is a session to read it with.
+  const HASH = '9b5109d15254ad7fc7d18f597b4026422a69bdc48a4be7d43823866a6ea15915'
+  const ROTATED = '0abcdb8c8b3632cf3d9922f66c66fb032953e9205e3b6952076d9da9ccf61cd4'
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const withSession = () => new CreditKarmaClient('valid-token', undefined, 'CKAT=abc')
+
+  it('rediscovers the hash and replays the page', async () => {
+    vi.spyOn(queryHash, 'discoverQueryHash').mockResolvedValue(ROTATED)
+    const fetchSpy = vi
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(noQueryFound())
+      .mockResolvedValueOnce(okResponse())
+
+    const page = await withSession().fetchPage()
+
+    expect(page.transactions).toHaveLength(1)
+    const replay = JSON.parse((fetchSpy.mock.calls[1][1] as RequestInit).body as string)
+    expect(replay.extensions.persistedQuery.sha256Hash).toBe(ROTATED)
+  })
+
+  it('reuses the rediscovered hash for later pages', async () => {
+    // Otherwise every page of a multi-page sync pays discovery again.
+    const discover = vi.spyOn(queryHash, 'discoverQueryHash').mockResolvedValue(ROTATED)
+    // Fresh Response per call — a Response body can only be consumed once.
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(noQueryFound())
+      .mockImplementation(async () => okResponse())
+
+    const client = withSession()
+    await client.fetchPage()
+    const second = await client.fetchPage('cursor-2')
+
+    expect(second.transactions).toHaveLength(1)
+    expect(discover).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not rediscover twice for one client', async () => {
+    // A second lookup would return the same answer and stall the sync again.
+    const discover = vi.spyOn(queryHash, 'discoverQueryHash').mockResolvedValue(ROTATED)
+    vi.spyOn(global, 'fetch').mockImplementation(async () => noQueryFound())
+
+    const client = withSession()
+    await client.fetchPage().catch(() => null)
+    await client.fetchPage().catch(() => null)
+
+    expect(discover).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives up when discovery returns the hash we already sent', async () => {
+    // Nothing rotated, so replaying is pointless — the failure is elsewhere.
+    vi.spyOn(queryHash, 'discoverQueryHash').mockResolvedValue(HASH)
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async () => noQueryFound())
+
+    await expect(withSession().fetchPage()).rejects.toThrow(/No query found/)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives up when discovery finds nothing', async () => {
+    vi.spyOn(queryHash, 'discoverQueryHash').mockResolvedValue(null)
+    vi.spyOn(global, 'fetch').mockImplementation(async () => noQueryFound())
+
+    await expect(withSession().fetchPage()).rejects.toThrow(/No query found/)
+  })
+
+  it('surfaces the original error when the replay also fails', async () => {
+    vi.spyOn(queryHash, 'discoverQueryHash').mockResolvedValue(ROTATED)
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async () => noQueryFound())
+
+    await expect(withSession().fetchPage()).rejects.toThrow(/No query found/)
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips discovery entirely without session cookies', async () => {
+    // Discovery reads a signed-in page; without cookies it can only ever
+    // return the login bundle, so spending the request is pure latency.
+    const discover = vi.spyOn(queryHash, 'discoverQueryHash')
+    vi.spyOn(global, 'fetch').mockImplementation(async () => noQueryFound())
+
+    await expect(new CreditKarmaClient('valid-token').fetchPage()).rejects.toThrow(/No query found/)
+    expect(discover).not.toHaveBeenCalled()
   })
 })
 

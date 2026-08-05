@@ -17,8 +17,8 @@ const TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
  * decides whether we POST `/member/oauth2/refresh` — and every one of those
  * ROTATES CK's refresh token, invalidating the copy in the browser's `CKAT`
  * cookie and eventually signing the user out of creditkarma.com (#119).
- * Assuming a 10-minute life for a token that CK gave 15 manufactured needless
- * rotations; reading `exp` makes the decision honest.
+ * Assuming a 10-minute life for a token CK actually gave 15 minutes
+ * manufactured needless rotations; reading `exp` makes the decision honest.
  *
  * Falls back to the synthetic window for anything undecodable, so opaque
  * tokens keep working.

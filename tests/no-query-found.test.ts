@@ -2,22 +2,27 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   CreditKarmaClient,
   isNoQueryFound,
-  NO_QUERY_FOUND_ATTEMPTS,
-  NO_QUERY_FOUND_BACKOFF_MS,
+  CK_CLIENT_NAME,
+  CK_CLIENT_VERSION,
+  TRANSACTION_OPERATION_NAME,
+  TRANSACTION_QUERY_HASH,
 } from '../src/client.js'
 
-// Credit Karma's GraphQL gateway rejects a fraction of well-formed requests
-// with `HTTP 400 {"message":"No query found"}`. Measured 2026-08-01 against a
-// live account: identical POSTs on the same connection pool returned 200 or
-// 400 with no client-observable predictor. Falsified as causes: query size (a
-// 25-byte `query Ping { __typename }` fails at the same rate), persisted
-// queries (ad-hoc queries execute fine, so the gateway is not APQ-only), the
-// `ck-*` client headers, session/Akamai cookies, and request rate (250ms vs
-// 3s pacing: 10/16 vs 8/16 failures). Both outcomes reach the origin with
-// identical headers apart from `connection: close` on the failure.
+// Credit Karma's GraphQL gateway answers `HTTP 400 {"message":"No query
+// found"}` when it cannot resolve a request against its safelisted operation
+// registry. It is not a flake and it is not retryable — measured 2026-08-05
+// against a live account by ablating one header at a time from a working
+// request:
 //
-// So it is retried, narrowly: only this exact signature, so a real 400 (bad
-// query, schema drift) still surfaces immediately.
+//   200  all headers (control)          200  minus ck-cookie-id
+//   400  minus ck-client-name           200  minus ck-device-type
+//   400  minus ck-client-version        200  minus ck-trace-id / tz-id / accept
+//   400  ck-client-name: "web"          200  no Origin / Referer / User-Agent
+//   400  prime_web + full query doc     200  ONLY ck-client-name + ck-client-version
+//
+// So two things are required, and nothing else is: the `ck-client-name` /
+// `ck-client-version` pair, and a persisted-query body carrying only a
+// sha256 hash. A full ad-hoc document is rejected even with correct headers.
 
 const mockPage = {
   transactions: [{ id: 'tx1' }],
@@ -64,75 +69,106 @@ describe('isNoQueryFound', () => {
   })
 })
 
-describe('fetchPage — "No query found" retry', () => {
+describe('persisted-query request shape', () => {
   let client: CreditKarmaClient
 
   beforeEach(() => {
-    vi.useFakeTimers()
     client = new CreditKarmaClient('valid-token')
   })
 
   afterEach(() => {
-    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
-  it('retries and succeeds when the gateway rejects the first attempt', async () => {
-    const fetchSpy = vi
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(noQueryFound())
-      .mockResolvedValueOnce(okResponse())
+  const capture = async (cursor?: string) => {
+    const spy = vi.spyOn(global, 'fetch').mockResolvedValue(okResponse())
+    await client.fetchPage(cursor)
+    const init = spy.mock.calls[0][1] as RequestInit
+    return {
+      body: JSON.parse(init.body as string),
+      headers: init.headers as Record<string, string>,
+    }
+  }
 
-    const [page] = await Promise.all([client.fetchPage(), vi.runAllTimersAsync()])
+  it('sends the persisted hash instead of a query document', async () => {
+    // The gateway rejects ad-hoc documents outright, so sending `query` is not
+    // a harmless extra — the whole request fails.
+    const { body } = await capture()
 
-    expect(page.transactions).toHaveLength(1)
-    expect(fetchSpy).toHaveBeenCalledTimes(2)
+    expect(body.extensions.persistedQuery).toEqual({ version: 1, sha256Hash: TRANSACTION_QUERY_HASH })
+    expect(body.operationName).toBe(TRANSACTION_OPERATION_NAME)
+    expect(body).not.toHaveProperty('query')
   })
 
-  it('retries more than once before giving up', async () => {
-    const fetchSpy = vi
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(noQueryFound())
-      .mockResolvedValueOnce(noQueryFound())
-      .mockResolvedValueOnce(okResponse())
-
-    const [page] = await Promise.all([client.fetchPage(), vi.runAllTimersAsync()])
-
-    expect(page.transactions).toHaveLength(1)
-    expect(fetchSpy).toHaveBeenCalledTimes(3)
+  it('pins the hash to the operation CK has safelisted', () => {
+    // A 64-hex sha256 from CK's own pregenerated manifest. If CK ships a web
+    // build that rotates it, sync starts failing with "No query found" again.
+    expect(TRANSACTION_QUERY_HASH).toMatch(/^[0-9a-f]{64}$/)
+    expect(TRANSACTION_OPERATION_NAME).toBe('GetTransactions')
   })
 
-  it('gives up after a bounded number of attempts', async () => {
-    // `mockImplementation`, not `mockResolvedValue`: a Response body is
-    // single-use, so every attempt needs its own object (as in production).
+  it('still sends the pagination cursor in variables', async () => {
+    const { body } = await capture('my-cursor')
+
+    expect(body.variables.input.paginationInput.afterCursor).toBe('my-cursor')
+  })
+
+  it('identifies as prime_web — the exact value the registry is keyed on', async () => {
+    // "web" (the value the refresh endpoint takes) is rejected here.
+    const { headers } = await capture()
+
+    expect(headers['ck-client-name']).toBe('prime_web')
+    expect(CK_CLIENT_NAME).toBe('prime_web')
+  })
+
+  it('sends a non-empty ck-client-version', async () => {
+    // Presence-checked only — any non-empty value works, an empty one 400s.
+    const { headers } = await capture()
+
+    expect(headers['ck-client-version']).toBe(CK_CLIENT_VERSION)
+    expect(CK_CLIENT_VERSION).not.toBe('')
+  })
+
+  it('still authenticates with the bearer token', async () => {
+    const { headers } = await capture()
+
+    expect(headers['Authorization']).toBe('Bearer valid-token')
+  })
+})
+
+describe('fetchPage — "No query found" handling', () => {
+  let client: CreditKarmaClient
+
+  beforeEach(() => {
+    client = new CreditKarmaClient('valid-token')
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('fails on the first attempt — retrying cannot help', async () => {
+    // The rejection is deterministic: the gateway either resolves the hash or
+    // it does not. Six attempts bought ~5.4s of backoff and nothing else.
     const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async () => noQueryFound())
 
-    const err = await Promise.all([
-      client.fetchPage().catch((e: Error) => e),
-      vi.runAllTimersAsync(),
-    ]).then(([e]) => e as Error)
-
-    expect(fetchSpy).toHaveBeenCalledTimes(NO_QUERY_FOUND_ATTEMPTS)
-    // The message must name the upstream cause and the fact that we retried,
-    // so this doesn't read like a bug in our query.
-    expect(err.message).toMatch(/No query found/)
-    expect(err.message).toMatch(new RegExp(`${NO_QUERY_FOUND_ATTEMPTS} attempts`))
+    await expect(client.fetchPage()).rejects.toThrow(/No query found/)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('backs off between attempts rather than hammering the gateway', async () => {
+  it('blames a stale persisted hash, not the session', async () => {
+    // The actionable fix is re-deriving the hash from CK's current web bundle.
+    // Telling the user to re-authenticate or retry sends them nowhere.
     vi.spyOn(global, 'fetch').mockImplementation(async () => noQueryFound())
-    const sleepSpy = vi.spyOn(global, 'setTimeout')
 
-    await Promise.all([client.fetchPage().catch(() => null), vi.runAllTimersAsync()])
+    const err = await client.fetchPage().catch((e: Error) => e)
 
-    const delays = sleepSpy.mock.calls.map((c) => c[1]).filter((d): d is number => typeof d === 'number' && d > 0)
-    expect(delays.length).toBe(NO_QUERY_FOUND_ATTEMPTS - 1)
-    // Strictly increasing — a flat retry is not a backoff.
-    expect(delays).toEqual([...delays].sort((a, b) => a - b))
-    expect(new Set(delays).size).toBe(delays.length)
+    expect(err.message).toMatch(/persisted/i)
+    expect(err.message).toMatch(/usePregeneratedHashes/)
+    expect(err.message).not.toMatch(/retry the sync/i)
   })
 
-  it('does NOT retry a 400 that is a real query error', async () => {
+  it('does NOT swallow a 400 that is a real query error', async () => {
     const fetchSpy = vi
       .spyOn(global, 'fetch')
       .mockResolvedValue(
@@ -153,42 +189,25 @@ describe('fetchPage — "No query found" retry', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('still throws TOKEN_EXPIRED on a 401 seen during the retry loop', async () => {
-    // Auth must win over the gateway retry: a 401 after a "No query found"
-    // means re-auth, not another attempt at the same broken request.
-    const fetchSpy = vi
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(noQueryFound())
-      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+  it('still throws TOKEN_EXPIRED on a 401', async () => {
+    // Auth must still win: a 401 means re-auth, not a hash problem.
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response(null, { status: 401 }))
 
-    await expect(
-      Promise.all([client.fetchPage(), vi.runAllTimersAsync()]).then(([p]) => p),
-    ).rejects.toThrow('TOKEN_EXPIRED')
-    expect(fetchSpy).toHaveBeenCalledTimes(2)
+    await expect(client.fetchPage()).rejects.toThrow('TOKEN_EXPIRED')
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('retries a "No query found" that arrives after a 429 backoff', async () => {
+  it('still replays once after a 429', async () => {
+    vi.useFakeTimers()
     const fetchSpy = vi
       .spyOn(global, 'fetch')
       .mockResolvedValueOnce(new Response(null, { status: 429 }))
-      .mockResolvedValueOnce(noQueryFound())
       .mockResolvedValueOnce(okResponse())
 
     const [page] = await Promise.all([client.fetchPage(), vi.runAllTimersAsync()])
 
     expect(page.transactions).toHaveLength(1)
-    expect(fetchSpy).toHaveBeenCalledTimes(3)
-  })
-})
-
-describe('retry sizing', () => {
-  it('has one backoff entry per retry', () => {
-    // A mismatch would either hammer with `undefined` delay or skip a wait.
-    expect(NO_QUERY_FOUND_BACKOFF_MS).toHaveLength(NO_QUERY_FOUND_ATTEMPTS - 1)
-  })
-
-  it('keeps the worst-case wait per page bounded', () => {
-    const total = NO_QUERY_FOUND_BACKOFF_MS.reduce((a, b) => a + b, 0)
-    expect(total).toBeLessThanOrEqual(10_000)
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
   })
 })

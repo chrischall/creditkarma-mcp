@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 // Simulates the layout that `mcpb pack` produces — only the files .mcpbignore
-// whitelists end up next to the bundle. If anything the bundle reads at
-// runtime (transaction.graphql, etc.) gets re-trimmed by accident, the server
-// will ENOENT on startup and the MCP host will see a transport that closes
-// within ~100 ms of spawn with no stack trace. This test catches that.
+// whitelists end up next to the bundle. If the bundle ever regains a runtime
+// read of a file that got trimmed, the server will ENOENT on startup and the
+// MCP host will see a transport that closes within ~100 ms of spawn with no
+// stack trace. This test catches that.
 describe('mcpb bundle smoke', () => {
   let stagingDir: string
 
@@ -21,7 +21,6 @@ describe('mcpb bundle smoke', () => {
     copyFileSync('package.json', join(stagingDir, 'package.json'))
     copyFileSync('manifest.json', join(stagingDir, 'manifest.json'))
     copyFileSync('dist/bundle.js', join(stagingDir, 'dist', 'bundle.js'))
-    copyFileSync('dist/transaction.graphql', join(stagingDir, 'dist', 'transaction.graphql'))
   })
 
   afterAll(() => {

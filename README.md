@@ -193,7 +193,7 @@ sync_state   (key, value)
 
 **Tools not appearing** — fully quit and relaunch Claude Desktop. In Claude Code, run `/mcp` to check server status.
 
-**"No such file or directory: dist/transaction.graphql"** — run `npm run build` (not just `tsc`).
+**"No such file or directory: dist/bundle.js"** — run `npm run build` (not just `tsc`).
 
 ## Security
 
@@ -208,7 +208,7 @@ sync_state   (key, value)
 
 ```bash
 npm test               # run the test suite (vitest)
-npm run build          # compile TypeScript → dist/, copy transaction.graphql, bundle for MCPB
+npm run build          # compile TypeScript → dist/, bundle for MCPB
 npm run test:watch     # watch mode
 npm run test:coverage  # coverage report (CI enforces 100% on src/**)
 ```
@@ -227,7 +227,7 @@ src/
   client.ts             Credit Karma GraphQL client (auto-refresh, JWT helpers, cookie parser)
   index.ts              MCP server entry point; bootstraps tokens from CK_COOKIES
   db.ts                 SQLite schema, migrations, and upsert helpers
-  transaction.graphql   GraphQL query for transactions (copied to dist/ at build time)
+  transaction.graphql   Documents the transactions selection set (sent as a persisted-query hash, not this text)
   tools/
     auth.ts             ck_set_session — refuses stale refresh tokens, writes .env at 0600
     sync.ts             ck_sync_transactions — incremental sync with resume-on-failure

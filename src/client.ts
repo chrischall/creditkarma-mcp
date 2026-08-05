@@ -1,6 +1,3 @@
-import { readFileSync } from 'fs'
-import { fileURLToPath } from 'url'
-import { join, dirname } from 'path'
 import { truncateErrorMessage, decodeJwtClaim, parseCookieHeader } from '@chrischall/mcp-utils'
 import { TokenManager } from '@chrischall/mcp-utils/session'
 import { CkAuthError } from './authError.js'
@@ -11,28 +8,41 @@ const TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
 const RATE_LIMIT_BACKOFF_MS = 2000
 
 /**
- * Total attempts allowed for one page when CK's gateway keeps answering
- * `No query found`.
+ * Client identity the GraphQL gateway keys its persisted-operation registry on.
  *
- * Sized from the measured per-request failure rate of ~44% (2026-08-01, 16
- * live POSTs). Attempts fail close to independently, so residual per-page risk
- * is ~0.44^n: 3 attempts leaves ~8.5%, which compounds badly across a
- * multi-page sync (~58% chance of losing a 10-page run). Six attempts brings it
- * to ~0.7% per page — ~93% for that same 10-page sync. The cap still bounds the
- * work: a page that is genuinely broken costs six tries and ~5s, then fails
- * loudly (and `ck_sync_transactions` checkpoints `last_cursor` so the next run
- * resumes).
+ * `prime_web` is the CK web app's own value and the ONLY one that resolves —
+ * `web` (what `/member/oauth2/refresh` accepts) is rejected. Without this
+ * header pair the gateway has no registry to look the operation up in and
+ * answers `No query found`, which is why that error was long mistaken for a
+ * ~44% upstream flake.
+ *
+ * The version is presence-checked only: `1.0.0`, `2.0.30` and `99.0.0` all
+ * return 200, an empty string 400s. It tracks CK's deployed web build purely
+ * as documentation of where {@link TRANSACTION_QUERY_HASH} came from.
  */
-export const NO_QUERY_FOUND_ATTEMPTS = 6
+export const CK_CLIENT_NAME = 'prime_web'
+export const CK_CLIENT_VERSION = '2.0.31'
+
+/** Operation name that goes alongside the persisted hash. */
+export const TRANSACTION_OPERATION_NAME = 'GetTransactions'
 
 /**
- * Backoff before each retry; one entry per retry (attempts − 1).
+ * sha256 of CK's safelisted `GetTransactions` operation.
  *
- * Deliberately modest: the failure is NOT rate-driven (250ms vs 3s pacing made
- * no difference), so a long backoff would buy latency and no extra reliability.
- * These delays exist to avoid a tight hammer loop, not to wait out a throttle.
+ * The gateway executes ONLY safelisted operations — a full ad-hoc document is
+ * rejected even with correct headers — so this hash, not
+ * `src/transaction.graphql`, is what actually selects the query. Its response
+ * is a superset of {@link ApiTransaction}, so the parser is unaffected.
+ *
+ * To re-derive after a CK web deploy: load a signed-in creditkarma.com page,
+ * grep the Next.js chunks under
+ * `creditkarmacdn-a.akamaihd.net/res/content/bundles/prime_web/<ver>/_next/static/chunks/`
+ * for `usePregeneratedHashes` — it holds a name→hash manifest of all 14
+ * operations.
  */
-export const NO_QUERY_FOUND_BACKOFF_MS = [300, 600, 1000, 1500, 2000]
+export const TRANSACTION_QUERY_HASH =
+  '9b5109d15254ad7fc7d18f597b4026422a69bdc48a4be7d43823866a6ea15915'
+
 export const GRAPHQL_ENDPOINT = 'https://api.creditkarma.com/graphql'
 export const CK_REFRESH_ENDPOINT = 'https://www.creditkarma.com/member/oauth2/refresh'
 
@@ -171,7 +181,7 @@ export class CreditKarmaClient {
   private graphqlPost(variables: Record<string, unknown>): Promise<Response> {
     return this.tokens
       .withAuth((accessToken) =>
-        this.post(GRAPHQL_ENDPOINT, { query: TRANSACTION_QUERY, variables }, accessToken)
+        this.post(GRAPHQL_ENDPOINT, buildPersistedRequest(variables), accessToken)
       )
       .catch((err: unknown) => {
         if (err instanceof Error && /no refresh token/i.test(err.message)) {
@@ -184,44 +194,42 @@ export class CreditKarmaClient {
   /**
    * Fetch a single page of transactions. Throws TOKEN_EXPIRED on 401.
    *
-   * Wrapped in a bounded retry for CK's flaky `No query found` gateway
-   * rejection (see {@link isNoQueryFound}) — that one signature only, so real
-   * 400s still fail fast on the first attempt.
+   * `No query found` fails immediately (see {@link isNoQueryFound}): the
+   * gateway either resolves our persisted hash or it never will, so a retry
+   * only adds latency to a certain failure.
    */
   async fetchPage(afterCursor?: string): Promise<TransactionPage> {
     if (!this.token) throw new Error('TOKEN_EXPIRED')
 
-    for (let attempt = 1; ; attempt++) {
-      let response = await this.graphqlPost(buildVariables(afterCursor))
+    let response = await this.graphqlPost(buildVariables(afterCursor))
 
+    if (response.status === 401) throw new Error('TOKEN_EXPIRED')
+
+    if (response.status === 429) {
+      await sleep(RATE_LIMIT_BACKOFF_MS)
+      response = await this.graphqlPost(buildVariables(afterCursor))
       if (response.status === 401) throw new Error('TOKEN_EXPIRED')
-
-      if (response.status === 429) {
-        await sleep(RATE_LIMIT_BACKOFF_MS)
-        response = await this.graphqlPost(buildVariables(afterCursor))
-        if (response.status === 401) throw new Error('TOKEN_EXPIRED')
-      }
-
-      if (response.ok) return parseTransactionPage(await response.json())
-
-      // Body is read once here: `Response` bodies are single-use, so the
-      // retry check and the error message share this one read.
-      const body = await readBodyOrEmpty(response)
-
-      if (isNoQueryFound(response.status, body)) {
-        if (attempt < NO_QUERY_FOUND_ATTEMPTS) {
-          await sleep(NO_QUERY_FOUND_BACKOFF_MS[attempt - 1])
-          continue
-        }
-        throw new Error(
-          `GraphQL gateway rejected the request with "No query found" on all ` +
-            `${NO_QUERY_FOUND_ATTEMPTS} attempts (HTTP ${response.status}). This is an upstream ` +
-            `Credit Karma fault, not a problem with the query — retry the sync.`,
-        )
-      }
-
-      throw new Error(httpErrorMessage(response.status, body))
     }
+
+    if (response.ok) return parseTransactionPage(await response.json())
+
+    // Body is read once here: `Response` bodies are single-use, so the
+    // signature check and the error message share this one read.
+    const body = await readBodyOrEmpty(response)
+
+    if (isNoQueryFound(response.status, body)) {
+      throw new Error(
+        `GraphQL gateway rejected the request with "No query found" (HTTP ${response.status}). ` +
+          `The persisted-query hash for ${TRANSACTION_OPERATION_NAME} is no longer registered — ` +
+          `Credit Karma has most likely shipped a web build that rotated it. This is not a ` +
+          `session problem, and retrying will not help. Re-derive the hash: open a signed-in ` +
+          `creditkarma.com page and grep its Next.js chunks for \`usePregeneratedHashes\`, then ` +
+          `update TRANSACTION_QUERY_HASH in src/client.ts. Already-synced data stays queryable ` +
+          `via ck_list_transactions / ck_query_sql.`,
+      )
+    }
+
+    throw new Error(httpErrorMessage(response.status, body))
   }
 
   /**
@@ -308,6 +316,10 @@ export class CreditKarmaClient {
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
+        // Required — without this pair the gateway cannot resolve the
+        // persisted operation and answers `No query found`.
+        'ck-client-name': CK_CLIENT_NAME,
+        'ck-client-version': CK_CLIENT_VERSION,
         'Origin': 'https://www.creditkarma.com',
         'Referer': 'https://www.creditkarma.com/',
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
@@ -346,8 +358,22 @@ export function warnIfRefreshTokenExpired(refreshToken: string | undefined | nul
 // GraphQL query
 // ---------------------------------------------------------------------------
 
-const _dir = dirname(fileURLToPath(import.meta.url))
-export const TRANSACTION_QUERY = readFileSync(join(_dir, 'transaction.graphql'), 'utf8')
+/**
+ * Build the persisted-query request body.
+ *
+ * Deliberately carries NO `query` field: CK's gateway executes only safelisted
+ * operations, and including a document gets the whole request rejected rather
+ * than being ignored as a harmless extra. `src/transaction.graphql` is kept in
+ * the repo as documentation of the selection set {@link parseTransactionPage}
+ * reads, but it is no longer sent — or even loaded — at runtime.
+ */
+function buildPersistedRequest(variables: Record<string, unknown>): Record<string, unknown> {
+  return {
+    extensions: { persistedQuery: { version: 1, sha256Hash: TRANSACTION_QUERY_HASH } },
+    operationName: TRANSACTION_OPERATION_NAME,
+    variables,
+  }
+}
 
 function buildVariables(afterCursor?: string): Record<string, unknown> {
   return {

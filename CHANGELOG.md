@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.4.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.3.3...v2.4.0) (2026-08-05)
+
+
+### Features
+
+* **sync:** re-read CK's persisted-query hash when the compiled one goes stale ([#118](https://github.com/chrischall/creditkarma-mcp/issues/118)) ([bd5fbdb](https://github.com/chrischall/creditkarma-mcp/commit/bd5fbdb71cdc952a039d22a2add37c737b0dffc9))
+
+
+### Bug Fixes
+
+* **auth:** stop refreshing tokens sync did not need, which logged users out of creditkarma.com ([#121](https://github.com/chrischall/creditkarma-mcp/issues/121)) ([b439fbd](https://github.com/chrischall/creditkarma-mcp/commit/b439fbdd90f1936616c21aa89c7eb67056d5009a))
+* **sync:** send GraphQL as a persisted query so ck_sync_transactions works again ([#116](https://github.com/chrischall/creditkarma-mcp/issues/116)) ([1c08f60](https://github.com/chrischall/creditkarma-mcp/commit/1c08f602173afa48c9c3be4e2d35ff9ffcd0c91e))
+
+
+### Documentation
+
+* **client:** repair the garbled sentence in accessTokenExpiry ([#123](https://github.com/chrischall/creditkarma-mcp/issues/123)) ([41b1a91](https://github.com/chrischall/creditkarma-mcp/commit/41b1a91aa18e71c21bd8bc3cfd2c8415ba59d69b))
+
 ## [2.3.3](https://github.com/chrischall/creditkarma-mcp/compare/v2.3.2...v2.3.3) (2026-08-01)
 
 

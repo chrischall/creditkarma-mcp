@@ -61,30 +61,36 @@ REFRESH=${CKAT#*;}
 
 ## Core call: fetch a page of transactions
 
-POST the reverse-engineered query (`src/transaction.graphql` in this repo —
-too large to inline; ~3800 lines because Credit Karma's app bundle carries
-hundreds of unrelated fragments alongside the ~30 lines the query body
-actually selects) to `https://api.creditkarma.com/graphql` with a bearer
-access token:
+The gateway executes **only safelisted operations**, so you do not send a query
+document — you send its sha256 hash. Sending the full document (even the
+correct one) is rejected with `HTTP 400 {"message":"No query found"}`.
+
+Two headers are mandatory: `ck-client-name: prime_web` — exactly that value,
+since `web` is rejected — and a non-empty `ck-client-version`. Nothing else is:
+no cookies, no `Origin`/`Referer`/`User-Agent`.
 
 ```sh
-CK_DIR=~/git/creditkarma-mcp   # wherever this repo is checked out
-
-jq -n --rawfile q "$CK_DIR/src/transaction.graphql" \
-  --argjson vars '{"input":{"paginationInput":{"afterCursor":null},
-    "categoryInput":{"categoryId":null,"primeCategoryType":null},
-    "datePeriodInput":{"datePeriod":null},"accountInput":{}}}' \
-  '{query:$q, variables:$vars}' > /tmp/ck-body.json
+jq -n --arg h 9b5109d15254ad7fc7d18f597b4026422a69bdc48a4be7d43823866a6ea15915 \
+  '{extensions:{persistedQuery:{version:1,sha256Hash:$h}},
+    operationName:"GetTransactions",
+    variables:{input:{paginationInput:{afterCursor:null},
+      categoryInput:{categoryId:null,primeCategoryType:null},
+      datePeriodInput:{datePeriod:null},accountInput:{}}}}' > /tmp/ck-body.json
 
 curl -s https://api.creditkarma.com/graphql -X POST \
   -H "Authorization: Bearer $ACCESS" \
   -H 'Content-Type: application/json' \
-  -H 'Origin: https://www.creditkarma.com' \
-  -H 'Referer: https://www.creditkarma.com/' \
-  -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+  -H 'ck-client-name: prime_web' \
+  -H 'ck-client-version: 2.0.31' \
   --data @/tmp/ck-body.json \
   | jq '.data.prime.transactionsHub.transactionPage'
 ```
+
+If this starts returning `No query found`, CK shipped a web build that rotated
+the hash. Re-derive it: open a signed-in creditkarma.com page and grep its
+Next.js chunks under
+`creditkarmacdn-a.akamaihd.net/res/content/bundles/prime_web/<ver>/_next/static/chunks/`
+for `usePregeneratedHashes` — a name→hash manifest of all 14 operations.
 
 ## The one rule: cursor-paginate, and check for an auth error INSIDE the 200 body
 

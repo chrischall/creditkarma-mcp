@@ -41,19 +41,21 @@ REFRESH=${CKAT#*;}                             # refresh JWT
 ```
 
 `afterCursor` is `null` for the first page, then the previous response's
-`pageInfo.endCursor` for subsequent pages. The query text itself lives at
-`src/transaction.graphql` in this repo (too large — ~3800 lines — to inline;
-only the top `query GetTransactions(...)` operation and the `fabricCardAny`
-fragment chain it references actually matter, but GraphQL requires every
-transitively-referenced fragment in the document, hence the size).
+`pageInfo.endCursor` for subsequent pages. You do **not** send a query
+document — the gateway only executes safelisted operations, so the request
+carries the sha256 hash of `GetTransactions` instead. Sending the full document
+from `src/transaction.graphql` is rejected with
+`HTTP 400 {"message":"No query found"}`; that file is now documentation of the
+selection set, not a request payload.
 
 ```sh
-CK_DIR=~/git/creditkarma-mcp
+GET_TRANSACTIONS_HASH=9b5109d15254ad7fc7d18f597b4026422a69bdc48a4be7d43823866a6ea15915
 
 build_body() {   # $1 = afterCursor (or the string "null")
-  jq -n --rawfile q "$CK_DIR/src/transaction.graphql" \
-    --argjson after "$1" \
-    '{query:$q, variables:{input:{
+  jq -n --arg h "$GET_TRANSACTIONS_HASH" --argjson after "$1" \
+    '{extensions:{persistedQuery:{version:1,sha256Hash:$h}},
+      operationName:"GetTransactions",
+      variables:{input:{
         paginationInput:{afterCursor:$after},
         categoryInput:{categoryId:null,primeCategoryType:null},
         datePeriodInput:{datePeriod:null},
@@ -62,12 +64,14 @@ build_body() {   # $1 = afterCursor (or the string "null")
 
 build_body null > /tmp/ck-body.json
 
+# ck-client-name MUST be exactly `prime_web` (`web` is rejected) and
+# ck-client-version must be non-empty; its value is not checked. Nothing else
+# is required — no cookies, no Origin/Referer/User-Agent.
 curl -s https://api.creditkarma.com/graphql -X POST \
   -H "Authorization: Bearer $ACCESS" \
   -H 'Content-Type: application/json' \
-  -H 'Origin: https://www.creditkarma.com' \
-  -H 'Referer: https://www.creditkarma.com/' \
-  -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+  -H 'ck-client-name: prime_web' \
+  -H 'ck-client-version: 2.0.31' \
   --data @/tmp/ck-body.json > /tmp/ck-resp.json
 ```
 

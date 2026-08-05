@@ -1,8 +1,7 @@
-# Keep the .mcpb lean. Ship four files:
-#   - manifest.json              (declared entry point + user config)
-#   - dist/bundle.js             (the esbuild bundle)
-#   - dist/transaction.graphql   (read at runtime by client.ts — NOT inlined by esbuild)
-#   - package.json               ({"type":"module"} is required for Node to read bundle.js as ESM)
+# Keep the .mcpb lean. Ship three files:
+#   - manifest.json   (declared entry point + user config)
+#   - dist/bundle.js  (the esbuild bundle)
+#   - package.json    ({"type":"module"} is required for Node to read bundle.js as ESM)
 
 # Dependencies — already inlined into dist/bundle.js by esbuild
 node_modules/
@@ -14,10 +13,11 @@ tests/
 *.spec.ts
 
 # tsc emits one .js per .ts alongside the bundle — those aren't referenced.
-# transaction.graphql IS referenced at runtime, so it must be whitelisted.
+# Nothing else in dist/ is read at runtime: the transactions query is sent as a
+# persisted-query hash, so transaction.graphql is documentation, not a runtime
+# asset.
 dist/*
 !dist/bundle.js
-!dist/transaction.graphql
 
 # Build config / dev tooling
 tsconfig.json

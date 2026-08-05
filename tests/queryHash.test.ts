@@ -139,4 +139,38 @@ describe('discoverQueryHash', () => {
   it('pins the marker the manifest is identified by', () => {
     expect(HASH_MANIFEST_MARKER).toBe('usePregeneratedHashes')
   })
+
+  it('spends one budget across the whole scan, not one per request', async () => {
+    // A per-fetch timeout would let 1 page + 40 chunks run to ~10 minutes,
+    // stalling a sync that has already failed. Here each chunk burns 6s of a
+    // 15s budget, so the scan must stop after a couple of chunks — not walk
+    // all 30.
+    vi.useFakeTimers()
+    const urls = Array.from({ length: 30 }, (_, i) => `<script src="${CHUNK_BASE}/${i}-abc${i}.js"></script>`).join('')
+    let chunkFetches = 0
+    const spy = vi.spyOn(global, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith(TRANSACTIONS_PAGE_URL)) return new Response(urls, { status: 200 })
+      chunkFetches++
+      vi.advanceTimersByTime(6_000)
+      return new Response('no manifest here', { status: 200 })
+    })
+
+    await expect(discoverQueryHash('GetTransactions', 'CKAT=x')).resolves.toBeNull()
+
+    expect(chunkFetches).toBeLessThan(5)
+    expect(spy.mock.calls.length).toBeLessThan(6)
+    vi.useRealTimers()
+  })
+
+  it('does not leave the budget timer pending once discovery settles', async () => {
+    // An uncleared timer would keep an otherwise-idle process awake.
+    vi.useFakeTimers()
+    routes(pageHtml(1), { '0-abc0.js': manifestChunk({ GetTransactions: HASH }) })
+
+    await discoverQueryHash('GetTransactions', 'CKAT=x')
+
+    expect(vi.getTimerCount()).toBe(0)
+    vi.useRealTimers()
+  })
 })

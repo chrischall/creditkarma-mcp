@@ -286,6 +286,127 @@ describe('ck_sync_transactions', () => {
     expect(i).toBeGreaterThan(1)
   })
 
+  describe('per-call page budget (hosted deployments)', () => {
+    /**
+     * The fleet pattern for a walk that cannot finish in one call
+     * (ofw-mcp's OFW_SYNC_MAX_REQUESTS, untappd's max_pages): bound the work,
+     * persist progress, and TELL THE CALLER to run it again. A hosted child
+     * answers inside somebody's request timeout; a local stdio one has all
+     * day, so unbounded stays the default and nothing about the local
+     * behaviour moves.
+     */
+    const everMorePages = (): (() => Promise<TransactionPage>) => {
+      let i = 0
+      return async () => {
+        i++
+        return makePage([makeTx(`tx${i}`, '2024-02-10')], true, `cursor-${i}`)
+      }
+    }
+
+    it('stops at max_pages, says another run is needed, and checkpoints where to resume', async () => {
+      vi.spyOn(ctx.client, 'fetchPage').mockImplementation(everMorePages())
+
+      const result = await handleSyncTransactions({ force_full: true, max_pages: 3 }, ctx)
+
+      expect(result.pages_fetched).toBe(3)
+      expect(result.stopped).toBe('max_pages')
+      expect(result.another_run_needed).toBe(true)
+      expect(result.note).toMatch(/ck_sync_transactions/)
+      // The resume point is persisted, or "run it again" is a lie.
+      expect(getSyncState(ctx.db, 'last_cursor')).toBe('cursor-3')
+      // An incomplete sync must NOT claim the day as synced — the next
+      // incremental run would then start after data it never fetched.
+      expect(getSyncState(ctx.db, 'last_sync_date')).toBeNull()
+    })
+
+    it('resumes from the checkpoint on the next call rather than starting over', async () => {
+      const fetchSpy = vi.spyOn(ctx.client, 'fetchPage').mockImplementation(everMorePages())
+      await handleSyncTransactions({ force_full: true, max_pages: 2 }, ctx)
+      fetchSpy.mockClear()
+
+      // No force_full: the second call is the "run it again" the note asked for.
+      await handleSyncTransactions({ max_pages: 2 }, ctx)
+
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe('cursor-2')
+    })
+
+    it('takes the budget from CK_SYNC_MAX_PAGES when no argument is given', async () => {
+      process.env.CK_SYNC_MAX_PAGES = '2'
+      try {
+        vi.spyOn(ctx.client, 'fetchPage').mockImplementation(everMorePages())
+        const result = await handleSyncTransactions({ force_full: true }, ctx)
+        expect(result.pages_fetched).toBe(2)
+        expect(result.stopped).toBe('max_pages')
+      } finally {
+        delete process.env.CK_SYNC_MAX_PAGES
+      }
+    })
+
+    it('lets an explicit argument beat the environment', async () => {
+      process.env.CK_SYNC_MAX_PAGES = '2'
+      try {
+        vi.spyOn(ctx.client, 'fetchPage').mockImplementation(everMorePages())
+        const result = await handleSyncTransactions({ force_full: true, max_pages: 4 }, ctx)
+        expect(result.pages_fetched).toBe(4)
+      } finally {
+        delete process.env.CK_SYNC_MAX_PAGES
+      }
+    })
+
+    it('stays unbounded with neither, so a local stdio sync behaves exactly as before', async () => {
+      // Unset means the ONLY ceiling is the runaway guard, which is what the
+      // pre-existing page_cap test pins.
+      delete process.env.CK_SYNC_MAX_PAGES
+      let i = 0
+      vi.spyOn(ctx.client, 'fetchPage').mockImplementation(async () => {
+        i++
+        return makePage([makeTx(`tx${i}`, '2024-02-10')], i < 5, `cursor-${i}`)
+      })
+
+      const result = await handleSyncTransactions({ force_full: true }, ctx)
+
+      expect(result.pages_fetched).toBe(5)
+      expect(result.stopped).toBeUndefined()
+      expect(result.another_run_needed).toBe(false)
+    })
+
+    it('ignores a budget that is not a usable page count rather than syncing nothing', async () => {
+      // A typo must not turn "sync" into "fetch zero pages and report success".
+      for (const bad of ['0', '-1', 'lots', '']) {
+        process.env.CK_SYNC_MAX_PAGES = bad
+        vi.spyOn(ctx.client, 'fetchPage').mockResolvedValue(makePage([makeTx('tx1', '2024-02-10')]))
+        const result = await handleSyncTransactions({ force_full: true }, ctx)
+        expect(result.pages_fetched, `for ${JSON.stringify(bad)}`).toBe(1)
+      }
+      delete process.env.CK_SYNC_MAX_PAGES
+    })
+
+    it('does not checkpoint an empty cursor — that is not a resume point', async () => {
+      // CK claiming more pages while handing back an empty endCursor. There is
+      // nothing to resume FROM, so nothing is written: the next run starts from
+      // whatever was already checkpointed (or the beginning), and the upserts
+      // are idempotent either way. Writing '' would be worse than writing
+      // nothing — it reads back as a cursor and resumes from nowhere.
+      vi.spyOn(ctx.client, 'fetchPage').mockResolvedValue(
+        makePage([makeTx('tx1', '2024-02-10')], true, ''),
+      )
+
+      const result = await handleSyncTransactions({ force_full: true, max_pages: 1 }, ctx)
+
+      expect(result.stopped).toBe('max_pages')
+      expect(result.another_run_needed).toBe(true)
+      expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
+    })
+
+    it('reports a completed sync as needing no further run', async () => {
+      vi.spyOn(ctx.client, 'fetchPage').mockResolvedValue(makePage([makeTx('tx1', '2024-02-10')]))
+      const result = await handleSyncTransactions({ force_full: true, max_pages: 5 }, ctx)
+      expect(result.another_run_needed).toBe(false)
+      expect(result.note).toMatch(/complete|up to date/i)
+      expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
+    })
+  })
+
   it('does not flag a stopped reason on a normal bounded multi-page sync', async () => {
     vi.spyOn(ctx.client, 'fetchPage')
       .mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')], true, 'c1'))

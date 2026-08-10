@@ -13,24 +13,68 @@ import { isCkAuthError } from '../authError.js'
 
 export interface SyncArgs {
   force_full?: boolean
+  /**
+   * Pages this call may fetch before pausing. Overrides `CK_SYNC_MAX_PAGES`.
+   * Absent with no env var = unbounded, i.e. exactly the behaviour a local
+   * stdio server has always had.
+   */
+  max_pages?: number
 }
 
 export interface SyncResult {
   new: number
   updated: number
   total: number
+  /** Pages fetched by THIS call. */
+  pages_fetched: number
+  /**
+   * True when this sync paused with data still to fetch. The caller's cue to
+   * run the tool again — the resume cursor is already checkpointed, so the
+   * next call continues rather than starting over.
+   */
+  another_run_needed: boolean
+  /** A sentence naming what happened and, when relevant, what to do next. */
+  note: string
   /** Set only when the page loop terminated on a safety guard rather than
    *  reaching the end of the data — surfaces a clear outcome instead of
    *  silently truncating or looping forever.
    *  - `cursor_stuck`: CK returned hasNextPage:true with a non-advancing cursor.
+   *  - `max_pages`: spent this call's page budget; more data remains.
    *  - `page_cap`: hit MAX_SYNC_PAGES; more data may remain. */
-  stopped?: 'cursor_stuck' | 'page_cap'
+  stopped?: 'cursor_stuck' | 'page_cap' | 'max_pages'
 }
 
 /** Hard ceiling on pages fetched in a single sync. CK pages are ~50–100 txns,
  *  so a few hundred pages covers years of history. The cap exists to bound a
  *  runaway loop (corrupted cursor, server bug), not to limit legitimate syncs. */
 export const MAX_SYNC_PAGES = 300
+
+/**
+ * Pages one call may fetch before pausing, from `CK_SYNC_MAX_PAGES`.
+ *
+ * A deep backfill is hundreds of pages and minutes of work. Locally that is
+ * fine — an stdio server has as long as it likes. HOSTED it is not: the call
+ * has to answer inside the client's request timeout, and a sync that runs past
+ * it is reported as a failure however much data it actually banked.
+ *
+ * So the walk becomes bounded and resumable, which is the shape the rest of
+ * the fleet already uses for this (`OFW_SYNC_MAX_REQUESTS` in ofw-mcp;
+ * `max_pages` in untappd-mcp's `untappd_sync_user_beers`). Deliberately NOT a
+ * background job with a status to poll: on a scale-to-zero machine the child
+ * is idled out from under a background walk, whereas every bounded call is
+ * complete in itself and the SQLite file IS the resume state.
+ *
+ * Unset — or set to anything that is not a usable page count — means
+ * unbounded, so a local stdio sync behaves exactly as it always has. A typo
+ * must never turn "sync" into "fetch nothing and report success".
+ */
+export function envMaxPages(): number | undefined {
+  const raw = process.env.CK_SYNC_MAX_PAGES
+  if (raw === undefined || raw.trim() === '') return undefined
+  if (!/^\d+$/.test(raw.trim())) return undefined
+  const pages = Number(raw.trim())
+  return Number.isInteger(pages) && pages > 0 ? pages : undefined
+}
 
 export async function handleSyncTransactions(
   args: SyncArgs,
@@ -40,6 +84,13 @@ export async function handleSyncTransactions(
   if (ctx.client.isTokenExpired() || !ctx.client.getToken()) {
     await refreshOrThrow(ctx)
   }
+
+  // An explicit argument is a decision the caller made for this call and beats
+  // the deployment's default, the same precedence every other budget in the
+  // fleet uses.
+  const budget = args.max_pages !== undefined && Number.isInteger(args.max_pages) && args.max_pages > 0
+    ? args.max_pages
+    : envMaxPages()
 
   const today = utcDateString(new Date())
   const lastSyncDate = getSyncState(ctx.db, 'last_sync_date')
@@ -68,6 +119,16 @@ export async function handleSyncTransactions(
   let prevCursor: string | undefined = cursor
 
   while (!done) {
+    // This call's budget, when it has one. Distinct from MAX_SYNC_PAGES below:
+    // that is a runaway guard against a broken cursor, this is a deliberate
+    // pause with more data known to remain.
+    if (budget !== undefined && pageCount >= budget) {
+      stopped = 'max_pages'
+      // `cursor` is the next page to fetch, so checkpointing it here is what
+      // makes "run it again" true rather than advice.
+      if (cursor) setSyncState(ctx.db, 'last_cursor', cursor)
+      break
+    }
     // Cap: never loop unboundedly. Surface a clear "stopped at cap" outcome and
     // leave last_cursor checkpointed below so a follow-up sync can resume.
     if (pageCount >= MAX_SYNC_PAGES) {
@@ -158,13 +219,35 @@ export async function handleSyncTransactions(
     setSyncState(ctx.db, 'last_sync_date', today)
     // Clear resume cursor on success
     ctx.db.prepare("DELETE FROM sync_state WHERE key = 'last_cursor'").run()
+  } else if (stopped === 'max_pages') {
+    // Already checkpointed at the pause. Nothing else to do — and in
+    // particular last_sync_date stays where it was, because a sync that did
+    // not reach the end must not let the next incremental run start after data
+    // it never fetched.
   } else if (stopped === 'cursor_stuck') {
     // A stuck cursor is not a clean finish — checkpoint it so a later sync can
     // retry from the same point (the page_cap path already checkpointed above).
     setSyncState(ctx.db, 'last_cursor', cursor!)
   }
 
-  return { new: newCount, updated: updatedCount, total: totalCount, ...(stopped ? { stopped } : {}) }
+  const anotherRunNeeded = stopped === 'max_pages' || stopped === 'page_cap'
+  const note = anotherRunNeeded
+    ? `Synced ${totalCount} transaction(s) over ${pageCount} page(s) and paused with more to fetch. ` +
+      'Run ck_sync_transactions again to continue from where this left off.'
+    : stopped === 'cursor_stuck'
+      ? `Synced ${totalCount} transaction(s), then stopped: Credit Karma kept reporting more pages without advancing its cursor. ` +
+        'Re-run to retry from the same point.'
+      : `Sync complete — ${totalCount} transaction(s) over ${pageCount} page(s); the local database is up to date.`
+
+  return {
+    new: newCount,
+    updated: updatedCount,
+    total: totalCount,
+    pages_fetched: pageCount,
+    another_run_needed: anotherRunNeeded,
+    note,
+    ...(stopped ? { stopped } : {}),
+  }
 }
 
 async function refreshOrThrow(ctx: AppContext, tokenKnownDead = false): Promise<void> {
@@ -240,10 +323,21 @@ export function registerSyncTools(server: McpServer, ctx: AppContext): void {
       description:
         'Sync Credit Karma transactions into the local SQLite database. ' +
         'Incremental by default (fetches since last sync + 30-day overlap for updates). ' +
-        'If no valid token, initiates the login/MFA flow automatically.',
+        'If no valid token, initiates the login/MFA flow automatically. ' +
+        'Bounded and resumable: when it pauses with more to fetch it returns ' +
+        'another_run_needed:true and a note — run it again and it continues from where it stopped.',
       annotations: { readOnlyHint: false },
       inputSchema: {
         force_full: z.boolean().optional().describe('If true, re-fetch all transactions from the beginning'),
+        max_pages: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            'Pages this call may fetch before pausing (a deep backfill is hundreds). ' +
+              'Overrides CK_SYNC_MAX_PAGES. Omit both for an unbounded sync.',
+          ),
       },
     },
     async (args) => {

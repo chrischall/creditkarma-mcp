@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.4.1...v2.5.0) (2026-08-10)
+
+
+### Features
+
+* **sync:** bound a sync to a page budget so a hosted call can finish ([#127](https://github.com/chrischall/creditkarma-mcp/issues/127)) ([81bfe4f](https://github.com/chrischall/creditkarma-mcp/commit/81bfe4f6b5cf77624e80a0f669311fa6fcfeee2e))
+
 ## [2.4.1](https://github.com/chrischall/creditkarma-mcp/compare/v2.4.0...v2.4.1) (2026-08-06)
 
 

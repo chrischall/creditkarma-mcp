@@ -28,9 +28,16 @@ export interface SyncResult {
   /** Pages fetched by THIS call. */
   pages_fetched: number
   /**
-   * True when this sync paused with data still to fetch. The caller's cue to
-   * run the tool again — the resume cursor is already checkpointed, so the
-   * next call continues rather than starting over.
+   * True when this sync paused with more to fetch AND running it again will
+   * make progress. The caller's cue to loop: the resume cursor is checkpointed,
+   * so the next call continues rather than starting over.
+   *
+   * Deliberately FALSE for `cursor_stuck`, which is the one pause where an
+   * immediate retry cannot help — Credit Karma handed back the same cursor it
+   * was given, so the next call replays the same page and the one after that
+   * does it again. A headless caller looping on this flag would hammer the
+   * endpoint, which is the behaviour the stuck-cursor guard exists to prevent.
+   * The `stopped` field says what happened; a LATER run may well get past it.
    */
   another_run_needed: boolean
   /** A sentence naming what happened and, when relevant, what to do next. */
@@ -74,6 +81,19 @@ export function envMaxPages(): number | undefined {
   if (!/^\d+$/.test(raw.trim())) return undefined
   const pages = Number(raw.trim())
   return Number.isInteger(pages) && pages > 0 ? pages : undefined
+}
+
+/**
+ * Record where a paused sync should resume.
+ *
+ * One helper for all three pause paths (budget, runaway cap, stuck cursor)
+ * because they share a rule that is easy to get wrong in one of them: an EMPTY
+ * cursor is not a resume point. Written, `''` reads back as a cursor and
+ * resumes from nowhere; skipped, the next run starts from the last real
+ * checkpoint and the upserts are idempotent anyway.
+ */
+function checkpoint(db: AppContext['db'], cursor: string | undefined): void {
+  if (cursor) setSyncState(db, 'last_cursor', cursor)
 }
 
 export async function handleSyncTransactions(
@@ -126,17 +146,16 @@ export async function handleSyncTransactions(
       stopped = 'max_pages'
       // `cursor` is the next page to fetch, so checkpointing it here is what
       // makes "run it again" true rather than advice.
-      if (cursor) setSyncState(ctx.db, 'last_cursor', cursor)
+      checkpoint(ctx.db, cursor)
       break
     }
     // Cap: never loop unboundedly. Surface a clear "stopped at cap" outcome and
     // leave last_cursor checkpointed below so a follow-up sync can resume.
     if (pageCount >= MAX_SYNC_PAGES) {
       stopped = 'page_cap'
-      // Reaching the cap means we paged MAX_SYNC_PAGES times, each advancing the
-      // cursor (a non-advancing cursor trips `cursor_stuck` first), so `cursor`
-      // is always a real resume point here. Checkpoint it for the next run.
-      setSyncState(ctx.db, 'last_cursor', cursor!)
+      // Reaching the cap means every page advanced the cursor (a non-advancing
+      // one trips `cursor_stuck` first), so this is always a real resume point.
+      checkpoint(ctx.db, cursor)
       break
     }
     pageCount++
@@ -225,9 +244,9 @@ export async function handleSyncTransactions(
     // not reach the end must not let the next incremental run start after data
     // it never fetched.
   } else if (stopped === 'cursor_stuck') {
-    // A stuck cursor is not a clean finish — checkpoint it so a later sync can
+    // A stuck cursor is not a clean finish — checkpoint it so a LATER sync can
     // retry from the same point (the page_cap path already checkpointed above).
-    setSyncState(ctx.db, 'last_cursor', cursor!)
+    checkpoint(ctx.db, cursor)
   }
 
   const anotherRunNeeded = stopped === 'max_pages' || stopped === 'page_cap'
@@ -236,7 +255,8 @@ export async function handleSyncTransactions(
       'Run ck_sync_transactions again to continue from where this left off.'
     : stopped === 'cursor_stuck'
       ? `Synced ${totalCount} transaction(s), then stopped: Credit Karma kept reporting more pages without advancing its cursor. ` +
-        'Re-run to retry from the same point.'
+        'This is a fault on their side, not a pause — the resume point is saved, but running the tool again ' +
+        'right now replays the same page. Try again later.'
       : `Sync complete — ${totalCount} transaction(s) over ${pageCount} page(s); the local database is up to date.`
 
   return {

@@ -398,6 +398,44 @@ describe('ck_sync_transactions', () => {
       expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
     })
 
+    it('does not ask for another run on a stuck cursor — that retry cannot make progress', async () => {
+      // The one pause where looping is wrong. CK handed back the cursor it was
+      // given, so the next call replays the same page and the one after that
+      // does it again; a headless caller driving off another_run_needed would
+      // hammer the endpoint, which is what the stuck-cursor guard exists to
+      // prevent. `stopped` still says what happened, and the note says a LATER
+      // run may get past it.
+      vi.spyOn(ctx.client, 'fetchPage').mockResolvedValue(
+        makePage([makeTx('tx-stuck', '2024-02-10')], true, 'same-cursor'),
+      )
+
+      const result = await handleSyncTransactions({ force_full: true }, ctx)
+
+      expect(result.stopped).toBe('cursor_stuck')
+      expect(result.another_run_needed).toBe(false)
+      // Asserted on what the note MEANS, not on the absence of a phrase: it
+      // warns that an immediate retry replays the page, and points at later.
+      expect(result.note).toMatch(/replays the same page/i)
+      expect(result.note).toMatch(/try again later/i)
+      // The resume point is still saved — a later run picks it up.
+      expect(getSyncState(ctx.db, 'last_cursor')).toBe('same-cursor')
+    })
+
+    it('checkpoints nothing when a stuck cursor is also an empty one', async () => {
+      // Reachable: page 1 returns endCursor '' (≠ the undefined it was given,
+      // so not yet stuck), page 2 returns '' again and trips the guard. There
+      // is nothing to resume from, and '' must not be written as though there
+      // were.
+      vi.spyOn(ctx.client, 'fetchPage').mockResolvedValue(
+        makePage([makeTx('tx1', '2024-02-10')], true, ''),
+      )
+
+      const result = await handleSyncTransactions({ force_full: true }, ctx)
+
+      expect(result.stopped).toBe('cursor_stuck')
+      expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
+    })
+
     it('reports a completed sync as needing no further run', async () => {
       vi.spyOn(ctx.client, 'fetchPage').mockResolvedValue(makePage([makeTx('tx1', '2024-02-10')]))
       const result = await handleSyncTransactions({ force_full: true, max_pages: 5 }, ctx)

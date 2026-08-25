@@ -30,7 +30,8 @@
   "files": [
     "dist",
     "skills",
-    "server.json"
+    "server.json",
+    "mint.yaml"
   ],
   "scripts": {
     "build": "tsc && npm run bundle",

@@ -1,0 +1,54 @@
+version: 1
+name: Credit Karma
+slug: creditkarma
+summary: >-
+  Credit Karma transaction tracking for Claude — sync and query your
+  transactions, spending by category and merchant, and account summaries via
+  natural language
+#
+# Hosting note (a comment, not user-facing summary text): this is a
+# BROWSER-BRIDGE MCP — it reaches its site through the user's signed-in
+# tab via the fetchproxy bridge. A bridged registration also needs runtime
+# `fly-shared`, `bridge: true` and a `bridgePortEnv`, which are registration
+# fields this manifest has no schema for (set them over the control API).
+# `state.dataDir` below is required for `bridge`.
+env:
+  - name: CK_COOKIES
+    secret: true
+    required: false
+    help: >-
+      Optional. The full Cookie header from a signed-in creditkarma.com request.
+      Leave unset to use the fetchproxy extension fallback — install fetchproxy
+      0.3.0, sign into creditkarma.com, and the MCP reads cookies automatically.
+      Otherwise copy the header from DevTools → Network → any creditkarma.com
+      request → Request Headers.
+  - name: CK_DISABLE_FETCHPROXY
+    required: false
+    help: >-
+      Set to 1 to skip the fetchproxy browser-extension fallback (missing creds
+      become a hard error — useful in headless CI).
+  - name: CK_DB_PATH
+    required: false
+    help: >-
+      Optional override for the SQLite database file. Defaults to
+      ~/.creditkarma-mcp/transactions.db. Set to a custom absolute path if you
+      want the data stored elsewhere.
+  - name: CK_SYNC_MAX_PAGES
+    required: false
+    help: >-
+      Pages one sync call may fetch before pausing. Unset means unbounded, up to
+      the hard ceiling of 300 pages that bounds a runaway loop.
+state:
+  dataDir: true
+  reason: >-
+    The fetchproxy identity lives at $HOME/.fetchproxy/identity/<name>.json
+    and the pair code derives from it. Without a persistent $HOME every cold
+    start mints a fresh identity and re-prompts pairing in the browser; the
+    API refuses bridge without it.
+egress:
+  allow:
+    # Only hosts the SERVER process actually fetches. Hosts that appear
+    # solely in a URL this server BUILDS and returns are excluded.
+    - api.creditkarma.com
+    - creditkarma.com
+    - www.creditkarma.com

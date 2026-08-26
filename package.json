@@ -40,9 +40,10 @@
     "dev": "node --env-file=.env dist/index.js",
     "inspect:accounts": "node scripts/inspect-accounts.mjs",
     "probe:accounts": "node scripts/probe-account-ids.mjs",
-    "test": "vitest run",
+    "test": "npm run typecheck && vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "npm run typecheck && vitest run --coverage",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@chrischall/mcp-utils": "^0.15.0",

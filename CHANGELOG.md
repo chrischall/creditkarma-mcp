@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.1](https://github.com/chrischall/creditkarma-mcp/compare/v2.5.0...v2.5.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* drop the bare creditkarma.com apex from mint.yaml egress ([#137](https://github.com/chrischall/creditkarma-mcp/issues/137)) ([c353bd1](https://github.com/chrischall/creditkarma-mcp/commit/c353bd1ee80d1c276e3e4d2f462ef3cb319902c9))
+
 ## [2.5.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.4.1...v2.5.0) (2026-08-10)
 
 

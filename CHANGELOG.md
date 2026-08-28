@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.2](https://github.com/chrischall/creditkarma-mcp/compare/v2.5.1...v2.5.2) (2026-08-28)
+
+
+### Bug Fixes
+
+* **egress:** declare only the hosts the server process dials in mint.yaml ([#141](https://github.com/chrischall/creditkarma-mcp/issues/141)) ([7c54740](https://github.com/chrischall/creditkarma-mcp/commit/7c5474018cd499c1441dff30b4bde7484266e3e0))
+
 ## [2.5.1](https://github.com/chrischall/creditkarma-mcp/compare/v2.5.0...v2.5.1) (2026-08-26)
 
 

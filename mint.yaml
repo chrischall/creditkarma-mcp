@@ -49,5 +49,20 @@ egress:
   allow:
     # Only hosts the SERVER process actually fetches. Hosts that appear
     # solely in a URL this server BUILDS and returns are excluded.
+    #
+    # The bridge here is BOOTSTRAP-ONLY: `@fetchproxy/bootstrap` lifts the
+    # CKAT/CKTRKID cookies out of the signed-in tab over a loopback socket
+    # (src/auth.ts) and every request after that is a plain Node fetch from
+    # this process, in every mode (CK_COOKIES, ck_set_session, fetchproxy).
+    # None of these hosts redirects (checked 2026-08-28).
+    #
+    # GraphQL gateway — every ck_sync_transactions call (src/client.ts).
     - api.creditkarma.com
+    # Token refresh POST (/member/oauth2/refresh) and the signed-in
+    # /networth/transactions page read during persisted-query-hash
+    # rediscovery (src/client.ts, src/queryHash.ts).
     - www.creditkarma.com
+    # Next.js chunk fetches during hash rediscovery. The host is scraped
+    # from the page at runtime (src/queryHash.ts CHUNK_URL_RE), so it is
+    # not pinned in code; this is the only CDN CK has served.
+    - creditkarmacdn-a.akamaihd.net

@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.5.2...v2.6.0) (2026-08-29)
+
+
+### Features
+
+* **deps:** take @fetchproxy/server 2.2.0 so the concentrator can bind its sandbox address ([#143](https://github.com/chrischall/creditkarma-mcp/issues/143)) ([faa18d5](https://github.com/chrischall/creditkarma-mcp/commit/faa18d5f56305aa5561a1c65513ebd5a2d4f4b59))
+
 ## [2.5.2](https://github.com/chrischall/creditkarma-mcp/compare/v2.5.1...v2.5.2) (2026-08-28)
 
 

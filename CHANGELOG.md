@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.7.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.6.0...v2.7.0) (2026-08-31)
+
+
+### Features
+
+* **tools:** add ck_healthcheck ([#149](https://github.com/chrischall/creditkarma-mcp/issues/149)) ([d9f922f](https://github.com/chrischall/creditkarma-mcp/commit/d9f922fdcb61242dceec43a3013f711d641ad249)), closes [#150](https://github.com/chrischall/creditkarma-mcp/issues/150)
+
+
+### Bug Fixes
+
+* **deps:** require mcp-utils 0.19.3 so a resolver-side rejection classifies ([#152](https://github.com/chrischall/creditkarma-mcp/issues/152)) ([b909aa9](https://github.com/chrischall/creditkarma-mcp/commit/b909aa98e3c2ca3b8495dfa4c13c59b5948e5ef2))
+
 ## [2.6.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.5.2...v2.6.0) (2026-08-29)
 
 

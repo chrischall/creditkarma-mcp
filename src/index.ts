@@ -7,6 +7,7 @@ import { initDb, backfillAccountIds } from './db.js'
 import type { Database } from './db.js'
 
 import { registerAuthTools } from './tools/auth.js'
+import { registerHealthcheckTools } from './tools/healthcheck.js'
 import { registerSyncTools } from './tools/sync.js'
 import { registerQueryTools } from './tools/query.js'
 import { registerSqlTools } from './tools/sql.js'
@@ -64,6 +65,7 @@ async function main() {
     version: '2.6.0', // x-release-please-version
     deps: ctx,
     tools: [
+      registerHealthcheckTools,
       registerAuthTools,
       registerSyncTools,
       registerQueryTools,

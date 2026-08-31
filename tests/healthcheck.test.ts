@@ -78,7 +78,12 @@ describe('ck_healthcheck', () => {
 
   // A resolver failure that is NOT no_credentials must propagate, not be
   // silently reported as a missing credential.
-  it('rethrows a non-no_credentials resolver failure', async () => {
+  // A session Credit Karma rejected is a REJECTED credential, not a missing
+  // one — including when the rejection surfaces from the resolver rather than
+  // the probe. mcp-utils 0.19.3 consults classifyThrown on that path, so the
+  // arm and the hint now match the cause; before it, this landed in
+  // `no_credential` and advised setting CK_COOKIES that were already set.
+  it('classifies a resolver-side rejection as rejected, not as missing', async () => {
     const r = await call({
       resolve: async () => {
         throw new CkAuthError('session_rejected', 'CK rejected the cookies at refresh')
@@ -86,6 +91,10 @@ describe('ck_healthcheck', () => {
     })
     expect(r.ok).toBe(false)
     expect(r.error?.message).toMatch(/rejected the cookies/)
+    expect(r.error?.kind).toBe('credential_rejected')
+    expect(r.error?.detail).toEqual({ reason: 'session_rejected' })
+    expect(r.hint).toMatch(/Sign in again in the browser/)
+    expect(r.hint).not.toMatch(/Set CK_COOKIES/)
   })
 
   it('treats "nothing readable" as no_credential and warns the mirror still answers', async () => {

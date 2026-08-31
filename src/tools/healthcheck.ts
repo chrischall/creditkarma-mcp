@@ -3,7 +3,7 @@ import { registerCredentialHealthcheckTool } from '@chrischall/mcp-utils/healthc
 import type { CreditKarmaClient } from '../client.js'
 import type { AppContext } from '../index.js'
 import { isJwtExpired } from '../client.js'
-import { resolveAuth, splitCkatCookie, loadAuthIntoClient, type ResolvedAuth } from '../auth.js'
+import { resolveAuth, splitCkatCookie, applyCookiesToClient, type ResolvedAuth } from '../auth.js'
 import { CkAuthError } from '../authError.js'
 
 /**
@@ -28,12 +28,21 @@ export function registerHealthcheckTools(
   /** Seams, injectable so tests need neither network nor browser. */
   deps: {
     resolve?: () => Promise<ResolvedAuth>
-    loadAuth?: (c: CreditKarmaClient) => Promise<void>
+    applyCookies?: (c: CreditKarmaClient, cookies: string) => void
   } = {},
 ): void {
   const { client } = ctx
   const resolve = deps.resolve ?? resolveAuth
-  const loadAuth = deps.loadAuth ?? loadAuthIntoClient
+  const applyCookies = deps.applyCookies ?? applyCookiesToClient
+
+  // `resolveCredential` and `probeFn` both need the cookies, and a resolve on
+  // the fetchproxy path is a browser round-trip. Holding the in-flight promise
+  // means one call does one resolve, and the credential the probe uses is the
+  // SAME one whose source was just reported — re-resolving could report `env`
+  // and then probe with something else if the browser session changed in
+  // between. Two concurrent healthchecks may share a resolution; that is
+  // harmless, since it is the same credential either way.
+  let inFlight: Promise<ResolvedAuth> | null = null
 
   registerCredentialHealthcheckTool({
     server,
@@ -42,7 +51,8 @@ export function registerHealthcheckTools(
     probePath: '/graphql (one transactions page)',
     resolveCredential: async () => {
       try {
-        const auth = await resolve()
+        inFlight = resolve()
+        const auth = await inFlight
         const { accessToken, refreshToken } = splitCkatCookie(auth.cookies)
         // Liveness of each JWT, never the JWT. An expired ACCESS token beside
         // a live REFRESH token is the normal steady state, so reporting only
@@ -62,12 +72,20 @@ export function registerHealthcheckTools(
         // ONLY "nothing readable" is a missing credential. A stale or rejected
         // session is a credential that exists and no longer works — letting it
         // fall in here would advise setting CK_COOKIES that are already set.
+        inFlight = null
         if (e instanceof CkAuthError && e.reason === 'no_credentials') return { source: null }
         throw e
       }
     },
     probeFn: async () => {
-      await loadAuth(client)
+      // Applied, not re-resolved: `loadAuthIntoClient` would resolve again.
+      //
+      // `inFlight` is always set here — the helper calls `probeFn` only after
+      // `resolveCredential` has resolved a credential, and a resolver failure
+      // or a null source returns before any probe. A `?? resolve()` fallback
+      // would be unreachable code that no test can cover.
+      const { cookies } = await (inFlight as Promise<ResolvedAuth>)
+      applyCookies(client, cookies)
       return client.fetchPage()
     },
     classifyThrown: (err: unknown) => {

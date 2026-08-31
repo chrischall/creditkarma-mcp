@@ -226,6 +226,19 @@ export function splitCkatCookie(cookies: string): {
  */
 export async function loadAuthIntoClient(client: CreditKarmaClient): Promise<void> {
   const { cookies } = await resolveAuth()
+  applyCookiesToClient(client, cookies)
+}
+
+/**
+ * The half of {@link loadAuthIntoClient} that does NOT resolve: validate a
+ * Cookie header and apply it.
+ *
+ * Split out so a caller that has already resolved can apply the SAME cookies
+ * instead of resolving a second time. On the fetchproxy path a resolve is a
+ * browser round-trip, so doing it twice in one tool call is a real cost and
+ * can even disagree with itself if the browser session changes in between.
+ */
+export function applyCookiesToClient(client: CreditKarmaClient, cookies: string): void {
   const { accessToken, refreshToken } = splitCkatCookie(cookies)
   if (!accessToken) {
     throw new CkAuthError(

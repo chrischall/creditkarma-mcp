@@ -5,7 +5,7 @@
 
 ### Features
 
-* **tools:** compact by default — strip media URLs, and minify every response ([#161](https://github.com/chrischall/creditkarma-mcp/issues/161)) ([d4720e4](https://github.com/chrischall/creditkarma-mcp/commit/d4720e462f02982eb1ff59a58c8509b1fe8215d9))
+* **tools:** minify every response — no formatting whitespace on any payload ([#161](https://github.com/chrischall/creditkarma-mcp/issues/161)) ([d4720e4](https://github.com/chrischall/creditkarma-mcp/commit/d4720e462f02982eb1ff59a58c8509b1fe8215d9))
 
 ## [2.7.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.6.0...v2.7.0) (2026-08-31)
 

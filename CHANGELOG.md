@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.8.1](https://github.com/chrischall/creditkarma-mcp/compare/v2.8.0...v2.8.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **deps:** bump hono from 4.13.0 to 4.13.7 ([#172](https://github.com/chrischall/creditkarma-mcp/issues/172)) ([21ec510](https://github.com/chrischall/creditkarma-mcp/commit/21ec5101a9f7dbc30387eb3d413bdcf63330eee2))
+* **deps:** require @fetchproxy/server ^2.7.0, the first that reads FETCHPROXY_IDENTITY_DIR ([#170](https://github.com/chrischall/creditkarma-mcp/issues/170)) ([181247f](https://github.com/chrischall/creditkarma-mcp/commit/181247fd47b30fee2995710ac2637ee089d70a36))
+
 ## [2.8.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.7.0...v2.8.0) (2026-09-04)
 
 

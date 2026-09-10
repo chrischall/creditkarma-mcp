@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.8.2](https://github.com/chrischall/creditkarma-mcp/compare/v2.8.1...v2.8.2) (2026-09-10)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 2.10.0 and @chrischall/mcp-utils 0.26.1 ([#175](https://github.com/chrischall/creditkarma-mcp/issues/175)) ([6e54c24](https://github.com/chrischall/creditkarma-mcp/commit/6e54c24689dc3e691dfc1e1bc7aa15e1d753b24e))
+* **deps:** declare the peer floors mcp-utils 0.26.1 requires ([#176](https://github.com/chrischall/creditkarma-mcp/issues/176)) ([bc39cc5](https://github.com/chrischall/creditkarma-mcp/commit/bc39cc570a9631fd33878d93f864a821a3bf458b))
+* **deps:** take @fetchproxy/server 2.9.1 so a pairing prompt survives ([#173](https://github.com/chrischall/creditkarma-mcp/issues/173)) ([ed24fb5](https://github.com/chrischall/creditkarma-mcp/commit/ed24fb5d4c892dcaf4a2ad16a1cd04f2ddb66083))
+
 ## [2.8.1](https://github.com/chrischall/creditkarma-mcp/compare/v2.8.0...v2.8.1) (2026-09-09)
 
 

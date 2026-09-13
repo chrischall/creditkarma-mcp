@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.8.3](https://github.com/chrischall/creditkarma-mcp/compare/v2.8.2...v2.8.3) (2026-09-13)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 2.11.3, so the hosted extension pin persists ([#178](https://github.com/chrischall/creditkarma-mcp/issues/178)) ([6400eda](https://github.com/chrischall/creditkarma-mcp/commit/6400edae5eb08ef52c6dcf314ff30218a90ccffc))
+* **deps:** bump the production-dependencies group with 2 updates ([044227f](https://github.com/chrischall/creditkarma-mcp/commit/044227f2a7dafd49e03c7103f105564a0801665b))
+
 ## [2.8.2](https://github.com/chrischall/creditkarma-mcp/compare/v2.8.1...v2.8.2) (2026-09-10)
 
 

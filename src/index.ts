@@ -62,7 +62,7 @@ async function main() {
 
   await runMcp({
     name: 'creditkarma-mcp',
-    version: '2.8.2', // x-release-please-version
+    version: '2.8.3', // x-release-please-version
     deps: ctx,
     tools: [
       registerHealthcheckTools,

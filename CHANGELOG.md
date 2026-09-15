@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.8.4](https://github.com/chrischall/creditkarma-mcp/compare/v2.8.3...v2.8.4) (2026-09-15)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 3.0.1 — capped peer frames, logged load drops, atomic identity writes ([#186](https://github.com/chrischall/creditkarma-mcp/issues/186)) ([3ae1b16](https://github.com/chrischall/creditkarma-mcp/commit/3ae1b1661e3c314a0fb90284141317f7f30cc37d))
+
 ## [2.8.3](https://github.com/chrischall/creditkarma-mcp/compare/v2.8.2...v2.8.3) (2026-09-14)
 
 

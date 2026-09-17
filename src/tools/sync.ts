@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { minifiedResult } from '@chrischall/mcp-utils'
-import type { McpServer } from '@modelcontextprotocol/server';
+import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import {
   upsertAccount, upsertCategory, upsertMerchant, upsertTransaction,

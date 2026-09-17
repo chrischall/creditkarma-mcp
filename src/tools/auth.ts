@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { rawTextResult, parseCookieHeader } from '@chrischall/mcp-utils'
 import { readFileSync, writeFileSync, existsSync, chmodSync } from 'fs'
 import { join, dirname } from 'path'
-import type { McpServer } from '@modelcontextprotocol/server';
+import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import { isJwtExpired } from '../client.js'
 

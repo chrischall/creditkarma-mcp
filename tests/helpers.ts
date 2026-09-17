@@ -1,8 +1,9 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server';
+import type { ZodObject } from 'zod';
 
 export interface RegisterCall {
   name: string
-  opts: { description: string; inputSchema: unknown; annotations?: unknown }
+  opts: { description: string; inputSchema: ZodObject; annotations?: unknown }
   handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>
 }
 

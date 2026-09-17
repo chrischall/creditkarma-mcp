@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { minifiedResult } from '@chrischall/mcp-utils'
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { AppContext } from '../index.js'
 import {
   upsertAccount, upsertCategory, upsertMerchant, upsertTransaction,
@@ -347,7 +347,7 @@ export function registerSyncTools(server: McpServer, ctx: AppContext): void {
         'Bounded and resumable: when it pauses with more to fetch it returns ' +
         'another_run_needed:true and a note — run it again and it continues from where it stopped.',
       annotations: { readOnlyHint: false },
-      inputSchema: {
+      inputSchema: z.object({
         force_full: z.boolean().optional().describe('If true, re-fetch all transactions from the beginning'),
         max_pages: z
           .number()
@@ -358,7 +358,7 @@ export function registerSyncTools(server: McpServer, ctx: AppContext): void {
             'Pages this call may fetch before pausing (a deep backfill is hundreds). ' +
               'Overrides CK_SYNC_MAX_PAGES. Omit both for an unbounded sync.',
           ),
-      },
+      }),
     },
     async (args) => {
       const result = await handleSyncTransactions(args, ctx)

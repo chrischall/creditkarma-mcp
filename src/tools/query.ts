@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { minifiedResult } from '@chrischall/mcp-utils'
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { AppContext } from '../index.js'
 import type { Database } from '../db.js'
 
@@ -258,7 +258,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     {
       description: 'List transactions with optional filters. Paginated.',
       annotations: { readOnlyHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),
         account: z.string().optional().describe('Partial account name match'),
@@ -269,7 +269,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
         max_amount: z.number().optional().describe('Maximum absolute amount'),
         limit: z.number().optional().describe('Default 50'),
         offset: z.number().optional().describe('Default 0'),
-      },
+      }),
     },
     async (args) => {
       const result = await handleListTransactions(args, ctx)
@@ -282,9 +282,9 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     {
       description: 'Return the N most recent transactions. Convenience shortcut for ck_list_transactions.',
       annotations: { readOnlyHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         limit: z.number().optional().describe('Number of transactions to return (default 25)'),
-      },
+      }),
     },
     async (args) => {
       const result = await handleGetRecentTransactions(args, ctx)
@@ -297,11 +297,11 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     {
       description: 'Group debit transactions by category and return totals.',
       annotations: { readOnlyHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),
         account: z.string().optional().describe('Partial account name filter'),
-      },
+      }),
     },
     async (args) => {
       const result = await handleGetSpendingByCategory(args, ctx)
@@ -314,12 +314,12 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     {
       description: 'Return top merchants by total debit spend.',
       annotations: { readOnlyHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),
         category: z.string().optional().describe('Partial category name filter'),
         limit: z.number().optional().describe('Default 25'),
-      },
+      }),
     },
     async (args) => {
       const result = await handleGetSpendingByMerchant(args, ctx)
@@ -332,10 +332,10 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     {
       description: 'Return per-account debit, credit, and net totals.',
       annotations: { readOnlyHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),
-      },
+      }),
     },
     async (args) => {
       const result = await handleGetAccountSummary(args, ctx)

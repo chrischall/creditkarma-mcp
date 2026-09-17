@@ -142,7 +142,7 @@ describe('registerSqlTools', () => {
     registerSqlTools(server, ctx)
     expect(calls).toHaveLength(1)
     expect(calls[0].name).toBe('ck_query_sql')
-    expect(calls[0].opts.inputSchema).toHaveProperty('sql')
+    expect(calls[0].opts.inputSchema.shape).toHaveProperty('sql')
   })
 
   it('handler returns query rows wrapped as MCP text content', async () => {

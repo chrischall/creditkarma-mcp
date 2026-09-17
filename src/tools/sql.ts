@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { minifiedResult } from '@chrischall/mcp-utils'
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { AppContext } from '../index.js'
 
 export interface QuerySqlArgs {
@@ -42,9 +42,9 @@ export function registerSqlTools(server: McpServer, ctx: AppContext): void {
         'Non-SELECT statements (INSERT, UPDATE, DELETE, DROP, etc.) are rejected. ' +
         'Tables: transactions, accounts, categories, merchants, sync_state.',
       annotations: { readOnlyHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         sql: z.string().describe('A SELECT SQL statement'),
-      },
+      }),
     },
     async (args) => {
       const result = await handleQuerySql(args, ctx)

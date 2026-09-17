@@ -497,7 +497,7 @@ describe('registerSyncTools', () => {
     registerSyncTools(server, ctx)
     expect(calls).toHaveLength(1)
     expect(calls[0].name).toBe('ck_sync_transactions')
-    expect(calls[0].opts.inputSchema).toHaveProperty('force_full')
+    expect(calls[0].opts.inputSchema.shape).toHaveProperty('force_full')
   })
 
   it('wraps the SyncResult as JSON-stringified MCP text content', async () => {

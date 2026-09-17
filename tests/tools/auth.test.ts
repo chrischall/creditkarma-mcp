@@ -206,7 +206,7 @@ describe('registerAuthTools', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0].name).toBe('ck_set_session')
     expect(calls[0].opts.description).toMatch(/Credit Karma/)
-    expect(calls[0].opts.inputSchema).toHaveProperty('cookies')
+    expect(calls[0].opts.inputSchema.shape).toHaveProperty('cookies')
   })
 
   it('wraps handler result as MCP text content', async () => {

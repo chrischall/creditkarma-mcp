@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.0.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.8.4...v3.0.0) (2026-09-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** migrate server to SDK v2 ([#188](https://github.com/chrischall/creditkarma-mcp/issues/188))
+
+### Features
+
+* **mcp:** migrate server to SDK v2 ([#188](https://github.com/chrischall/creditkarma-mcp/issues/188)) ([a5ecc4d](https://github.com/chrischall/creditkarma-mcp/commit/a5ecc4d1ebb2138eab50c5ff6d145fcd4643be23))
+
+
+### Bug Fixes
+
+* **build:** preserve Zod initialization in standalone bundle ([#191](https://github.com/chrischall/creditkarma-mcp/issues/191)) ([58e97bb](https://github.com/chrischall/creditkarma-mcp/commit/58e97bb9cf872c96e1e638bc02d2f42ecedc8c93))
+* **mcp:** verify SDK v2 tool schema ([#192](https://github.com/chrischall/creditkarma-mcp/issues/192)) ([55ffa81](https://github.com/chrischall/creditkarma-mcp/commit/55ffa8103a36f62d798b7e019aed9d00fbcfcd71)), closes [#189](https://github.com/chrischall/creditkarma-mcp/issues/189)
+
 ## [2.8.4](https://github.com/chrischall/creditkarma-mcp/compare/v2.8.3...v2.8.4) (2026-09-15)
 
 

@@ -1,5 +1,5 @@
-import type { McpServer } from '@modelcontextprotocol/server';
-import type { ZodObject } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/server'
+import type { ZodObject } from 'zod'
 
 export interface RegisterCall {
   name: string

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { createTestHarness } from '@chrischall/mcp-utils/test'
 import { handleQuerySql, registerSqlTools } from '../../src/tools/sql.js'
 import { initDb, upsertAccount, upsertCategory, upsertMerchant, upsertTransaction } from '../../src/db.js'
 import { CreditKarmaClient } from '../../src/client.js'
@@ -143,6 +144,20 @@ describe('registerSqlTools', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0].name).toBe('ck_query_sql')
     expect(calls[0].opts.inputSchema.shape).toHaveProperty('sql')
+  })
+
+  it('publishes the sql input through the SDK v2 tools/list schema', async () => {
+    const harness = await createTestHarness((server) => registerSqlTools(server, ctx))
+    const { tools } = await harness.client.listTools()
+    const tool = tools.find((candidate) => candidate.name === 'ck_query_sql')
+    expect(tool?.inputSchema).toMatchObject({
+      type: 'object',
+      properties: {
+        sql: { type: 'string', description: 'A SELECT SQL statement' }
+      },
+      required: ['sql']
+    })
+    await harness.close()
   })
 
   it('handler returns query rows wrapped as MCP text content', async () => {

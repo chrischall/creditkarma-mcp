@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/server';
+import { McpServer } from '@modelcontextprotocol/server'
 import { registerCredentialHealthcheckTool } from '@chrischall/mcp-utils/healthcheck'
 import type { CreditKarmaClient } from '../client.js'
 import type { AppContext } from '../index.js'

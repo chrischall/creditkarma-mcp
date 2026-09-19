@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/chrischall/creditkarma-mcp/compare/v3.0.0...v3.1.0) (2026-09-19)
+
+
+### Features
+
+* **deps:** take mcp-utils 1.0.0, fixing server/discover ([#193](https://github.com/chrischall/creditkarma-mcp/issues/193)) ([6df66c5](https://github.com/chrischall/creditkarma-mcp/commit/6df66c5cc9a585d78529a15327d2e8890cf8664d))
+
 ## [3.0.0](https://github.com/chrischall/creditkarma-mcp/compare/v2.8.4...v3.0.0) (2026-09-17)
 
 

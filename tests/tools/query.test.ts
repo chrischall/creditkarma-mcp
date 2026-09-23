@@ -29,7 +29,7 @@ function seedDb(db: ReturnType<typeof initDb>) {
 }
 
 function makeCtx(db: ReturnType<typeof initDb>): AppContext {
-  return { client: new CreditKarmaClient(), db, mcpJsonPath: '/tmp/.mcp.json' }
+  return { client: new CreditKarmaClient(), db }
 }
 
 describe('ck_list_transactions', () => {

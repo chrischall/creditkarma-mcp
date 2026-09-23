@@ -33,8 +33,7 @@ describe('refreshOrThrow — re-reading browser cookies', () => {
     loadAuthIntoClientMock.mockReset()
     ctx = {
       client: new CreditKarmaClient(),
-      db: initDb(':memory:'),
-      mcpJsonPath: '/tmp/.mcp.json',
+      db: initDb(':memory:')
     }
   })
 

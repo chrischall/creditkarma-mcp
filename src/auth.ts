@@ -15,10 +15,13 @@
 //      `<accessJWT>%3B<refreshJWT>` URL-encoded, which the caller parses.
 //      Legacy users keep working without action.
 //
-//   2. Cached session from `ck_set_session` (existing behavior)
-//      The MCP tool `ck_set_session` accepts a pasted Cookie header and
-//      persists it to .env as CK_COOKIES — so once it's been called, this
-//      path collapses into path 1 on subsequent runs.
+//   2. Saved session (`~/.creditkarma-mcp/session`, see src/session.ts)
+//      Written by `ck_set_session` and read here with plain `fs`. It used to
+//      be a CK_COOKIES line in <install>/.env, which the shipped .mcpb never
+//      read back (fleet-audit#71). Paths 1 and 2 are both LOCAL candidates:
+//      whichever holds the fresher refresh JWT wins (the saved file on a
+//      tie), so a stale host-provided CK_COOKIES cannot shadow a newer saved
+//      session, and a freshly re-pasted CK_COOKIES still beats an old file.
 //
 //   3. fetchproxy fallback (new)
 //      When no Cookie header is set, lift the user's session out of their
@@ -60,10 +63,11 @@
 
 import { bootstrap } from '@fetchproxy/bootstrap'
 import { classifyBridgeError, FetchproxyBridgeDownError } from '@chrischall/mcp-utils/fetchproxy'
-import { readEnvVar, parseBoolEnv, parseCookieHeader } from '@chrischall/mcp-utils'
+import { readEnvVar, parseBoolEnv, parseCookieHeader, decodeJwtClaim } from '@chrischall/mcp-utils'
 import pkg from '../package.json' with { type: 'json' }
 import { CreditKarmaClient, isJwtExpired } from './client.js'
 import { CkAuthError } from './authError.js'
+import { readSavedSession } from './session.js'
 
 /** Result of resolving CK auth, regardless of which path was taken. */
 export interface ResolvedAuth {
@@ -74,7 +78,7 @@ export interface ResolvedAuth {
    */
   cookies: string
   /** Which path produced the cookies. Diagnostics + future cache keying. */
-  source: 'env' | 'fetchproxy'
+  source: 'env' | 'session' | 'fetchproxy'
 }
 
 /** True if the user has explicitly disabled the fetchproxy fallback. Accepts
@@ -93,17 +97,11 @@ function fetchproxyDisabled(): boolean {
  * cache-keying only.
  */
 export async function resolveAuth(): Promise<ResolvedAuth> {
-  // ── Path 1: CK_COOKIES env var (unchanged from pre-fetchproxy behavior).
-  const envCookies = readEnvVar('CK_COOKIES')
-  if (envCookies) {
-    return { cookies: envCookies, source: 'env' }
-  }
+  // ── Paths 1 + 2: CK_COOKIES env var / saved session file.
+  const local = resolveLocalAuth()
+  if (local) return local
 
-  // ── Path 2: fetchproxy fallback (new).
-  //   (Path 2 — cached session from ck_set_session — also lands here at the
-  //    env-var step on subsequent runs, since that tool writes CK_COOKIES
-  //    to .env. So this branch only fires when neither env var nor cache
-  //    has been seeded.)
+  // ── Path 3: fetchproxy fallback — only when nothing local is configured.
   if (!fetchproxyDisabled()) {
     try {
       const session = await bootstrap({
@@ -186,6 +184,37 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
       'or install the fetchproxy extension and sign into creditkarma.com ' +
       '(unset CK_DISABLE_FETCHPROXY if it is set).',
   )
+}
+
+/**
+ * The best LOCAL credential — the saved session file or CK_COOKIES — without
+ * touching the browser. Null when neither is set.
+ *
+ * Shared by `resolveAuth()` and server startup so both pick the same one.
+ * Candidates are ranked live-before-expired, then by the refresh JWT's `exp`
+ * (fresher first), then saved-file-before-env: every rotation and every
+ * `ck_set_session` writes the file, so on equal footing it is the newer one.
+ * An expired candidate is still returned when it is all there is, so the
+ * caller reports `session_stale` rather than "nothing configured".
+ */
+export function resolveLocalAuth(): ResolvedAuth | null {
+  const candidates: ResolvedAuth[] = []
+  const saved = readSavedSession()
+  if (saved) candidates.push({ cookies: saved, source: 'session' })
+  const env = readEnvVar('CK_COOKIES')
+  if (env) candidates.push({ cookies: env, source: 'env' })
+  if (candidates.length === 0) return null
+
+  const rank = (c: ResolvedAuth): [number, number] => {
+    const { refreshToken } = splitCkatCookie(c.cookies)
+    const expired = refreshToken ? isJwtExpired(refreshToken) : false
+    const exp = refreshToken ? decodeJwtClaim(refreshToken, 'exp') : undefined
+    return [expired ? 0 : 1, typeof exp === 'number' ? exp : 0]
+  }
+  // Array.prototype.sort is stable, so equal ranks keep saved-file-first.
+  return candidates
+    .map((c) => ({ c, r: rank(c) }))
+    .sort((a, b) => b.r[0] - a.r[0] || b.r[1] - a.r[1])[0].c
 }
 
 /**

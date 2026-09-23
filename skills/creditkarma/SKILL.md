@@ -62,7 +62,7 @@ Three onboarding paths, in priority order:
 
 **1. fetchproxy extension (easiest — no env vars):** Install the [fetchproxy 0.3.0 extension](https://github.com/chrischall/fetchproxy), sign into creditkarma.com once, and leave `CK_COOKIES` **unset**. The MCP reads HttpOnly `CKAT` + `CKTRKID` cookies on the first tool call via `chrome.cookies.get`, then operates direct-to-API from Node.
 
-**2. ck_set_session MCP tool:** From within Claude, call `ck_set_session` with a Cookie header you copied from DevTools (see below). The tool persists it to `.env`.
+**2. ck_set_session MCP tool:** From within Claude, call `ck_set_session` with a Cookie header you copied from DevTools (see below). The tool saves it to `~/.creditkarma-mcp/session` (0600), which the server reads back on every start.
 
 **3. Manual (DevTools):**
 1. Log in to [creditkarma.com](https://www.creditkarma.com) in Chrome

@@ -20,6 +20,10 @@ import { resolveAuth, splitCkatCookie, loadAuthIntoClient } from '../src/auth.js
 import { CreditKarmaClient } from '../src/client.js'
 import { CkAuthError, isCkAuthError } from '../src/authError.js'
 import { makeJwt } from './helpers.js'
+import { saveSession } from '../src/session.js'
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 /** A refresh JWT whose `exp` is `secondsFromNow` away (negative ⇒ expired). */
 const refreshJwt = (secondsFromNow: number) =>
@@ -76,6 +80,69 @@ describe('resolveAuth', () => {
       const result = await resolveAuth()
 
       expect(result.cookies).toBe('CKAT=trimmed')
+    })
+  })
+
+  describe('saved session file (fleet-audit#71)', () => {
+    let dir: string
+    let savedPath: string | undefined
+    const ckat = (access: string, refresh: string) => `CKTRKID=trk; CKAT=${access}%3B${refresh}`
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'ck-resolve-'))
+      savedPath = process.env.CK_SESSION_PATH
+      process.env.CK_SESSION_PATH = join(dir, 'session')
+    })
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true })
+      process.env.CK_SESSION_PATH = savedPath
+    })
+
+    it('is read directly — no dotenv, no env var, no browser', async () => {
+      saveSession(ckat('acc', refreshJwt(3600)))
+
+      const result = await resolveAuth()
+
+      expect(bootstrapMock).not.toHaveBeenCalled()
+      expect(result.source).toBe('session')
+      expect(result.cookies).toBe(ckat('acc', refreshJwt(3600)))
+    })
+
+    it('beats a host-provided CK_COOKIES that is no fresher', async () => {
+      const refresh = refreshJwt(3600)
+      process.env.CK_COOKIES = ckat('env-acc', refreshJwt(1800))
+      saveSession(ckat('saved-acc', refresh))
+
+      const result = await resolveAuth()
+
+      expect(result.source).toBe('session')
+    })
+
+    it('yields to a CK_COOKIES whose refresh token is fresher (the user re-pasted their config)', async () => {
+      process.env.CK_COOKIES = ckat('env-acc', refreshJwt(7200))
+      saveSession(ckat('saved-acc', refreshJwt(3600)))
+
+      const result = await resolveAuth()
+
+      expect(result.source).toBe('env')
+    })
+
+    it('skips a saved session whose refresh token has expired when CK_COOKIES is live', async () => {
+      process.env.CK_COOKIES = ckat('env-acc', refreshJwt(3600))
+      saveSession(ckat('saved-acc', refreshJwt(-60)))
+
+      const result = await resolveAuth()
+
+      expect(result.source).toBe('env')
+    })
+
+    it('prefers the saved session when neither refresh token is decodable', async () => {
+      process.env.CK_COOKIES = 'CKAT=env%3Bopaque'
+      saveSession('CKAT=saved%3Bopaque')
+
+      const result = await resolveAuth()
+
+      expect(result.source).toBe('session')
     })
   })
 

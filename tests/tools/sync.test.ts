@@ -36,8 +36,7 @@ describe('ck_sync_transactions', () => {
     process.env.CK_DISABLE_FETCHPROXY = '1'
     ctx = {
       client: new CreditKarmaClient('valid-token'),
-      db: initDb(':memory:'),
-      mcpJsonPath: '/tmp/.mcp.json'
+      db: initDb(':memory:')
     }
   })
 
@@ -574,8 +573,7 @@ describe('registerSyncTools', () => {
     vi.setSystemTime(new Date('2024-02-15'))
     ctx = {
       client: new CreditKarmaClient('valid-token'),
-      db: initDb(':memory:'),
-      mcpJsonPath: '/tmp/.mcp.json'
+      db: initDb(':memory:')
     }
   })
   afterEach(() => {

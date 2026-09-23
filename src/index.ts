@@ -1,10 +1,11 @@
-import { readEnvVar, loadDotenvSafely, runMcp, parseCookieHeader } from '@chrischall/mcp-utils'
+import { readEnvVar, loadDotenvSafely, runMcp } from '@chrischall/mcp-utils'
 import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { CreditKarmaClient, warnIfRefreshTokenExpired } from './client.js'
 import { initDb, backfillAccountIds } from './db.js'
 import type { Database } from './db.js'
+import { resolveLocalAuth, splitCkatCookie } from './auth.js'
 
 import { registerAuthTools } from './tools/auth.js'
 import { registerHealthcheckTools } from './tools/healthcheck.js'
@@ -22,25 +23,17 @@ await loadDotenvSafely({ path: join(__dirname, '..', '.env') })
 export interface AppContext {
   client: CreditKarmaClient
   db: Database
-  mcpJsonPath: string
 }
 
 async function main() {
   const dbPath = readEnvVar('CK_DB_PATH') || join(homedir(), '.creditkarma-mcp', 'transactions.db')
-  const mcpJsonPath = join(__dirname, '..', '.mcp.json')
-
-  const cookies = readEnvVar('CK_COOKIES') || undefined
-
-  // Canonical CK_COOKIES is a full Cookie header. Parser stays lenient and
-  // also accepts a bare CKAT value or `CKAT=<value>` from legacy configs.
-  let token: string | undefined
-  let refreshToken: string | undefined
-  if (cookies) {
-    const ckat = parseCookieHeader(cookies)['CKAT'] ?? cookies.trim()
-    const parts = ckat.replace('%3B', ';').split(';')
-    token = parts[0]?.trim() || undefined
-    refreshToken = parts[1]?.trim() || undefined
-  }
+  // Seed from the same local credential resolveAuth() would pick — the saved
+  // session file (ck_set_session / rotated tokens) or CK_COOKIES, whichever is
+  // fresher — so a restart never goes back to a rotated-out refresh token.
+  const cookies = resolveLocalAuth()?.cookies
+  const split = cookies ? splitCkatCookie(cookies) : undefined
+  const token = split?.accessToken ?? undefined
+  const refreshToken = split?.refreshToken ?? undefined
 
   warnIfRefreshTokenExpired(refreshToken)
 
@@ -57,7 +50,6 @@ async function main() {
   const ctx: AppContext = {
     client: new CreditKarmaClient(token, refreshToken, cookies),
     db,
-    mcpJsonPath
   }
 
   await runMcp({

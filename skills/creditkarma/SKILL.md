@@ -90,7 +90,7 @@ The MCP handles auth automatically once any of the three paths is configured.
 ### Sync
 | Tool | Description |
 |------|-------------|
-| `ck_sync_transactions(force_full?)` | Sync transactions to local SQLite. Incremental by default (since last sync − 30 days). `force_full=true` re-fetches everything. |
+| `ck_sync_transactions(force_full?)` | Sync transactions to local SQLite. Incremental by default (since last sync − 30 days). `force_full=true` walks the whole history with no date cutoff — from the beginning, except that it continues a backfill paused by `max_pages`; after a failed or stuck sync it restarts from page 1. |
 
 ### Query
 | Tool | Description |

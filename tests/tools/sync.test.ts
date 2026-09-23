@@ -353,6 +353,48 @@ describe('ck_sync_transactions', () => {
       expect(fetchSpy).toHaveBeenCalledTimes(2)
     })
 
+    it('force_full still escapes a cursor checkpointed by a FAILED fetch — it restarts from the top', async () => {
+      // A failed page leaves a full-mode checkpoint, but that is not a pause:
+      // the cursor may be the very thing CK is rejecting. force_full is the
+      // only way out of it (ck_query_sql is read-only), so it must not resume.
+      vi.spyOn(ctx.client, 'fetchPage')
+        .mockResolvedValueOnce(makePage([makeTx('a', '2024-02-10')], true, 'bad'))
+        .mockRejectedValueOnce(new Error('HTTP 400 invalid cursor'))
+      await expect(handleSyncTransactions({ force_full: true }, ctx)).rejects.toThrow('HTTP 400')
+      expect(getSyncState(ctx.db, 'last_cursor')).toBe('bad')
+
+      const fetchSpy = vi.spyOn(ctx.client, 'fetchPage').mockClear()
+        .mockResolvedValueOnce(makePage([makeTx('a', '2024-02-10')]))
+      const result = await handleSyncTransactions({ force_full: true }, ctx)
+      expect(fetchSpy.mock.calls[0]?.[0]).toBeUndefined()
+      expect(result.stopped).toBeUndefined()
+      expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
+    })
+
+    it('force_full restarts from the top after a stuck-cursor stop, too', async () => {
+      vi.spyOn(ctx.client, 'fetchPage').mockResolvedValue(
+        makePage([makeTx('s', '2024-02-10')], true, 'same-cursor'),
+      )
+      await handleSyncTransactions({ force_full: true }, ctx)
+      expect(getSyncState(ctx.db, 'last_cursor')).toBe('same-cursor')
+
+      const fetchSpy = vi.spyOn(ctx.client, 'fetchPage').mockReset()
+        .mockResolvedValueOnce(makePage([]))
+      await handleSyncTransactions({ force_full: true }, ctx)
+      expect(fetchSpy.mock.calls[0]?.[0]).toBeUndefined()
+    })
+
+    it('force_full restarts once a resumed backfill fails, rather than trusting the failed cursor', async () => {
+      const fetchSpy = vi.spyOn(ctx.client, 'fetchPage').mockImplementation(deepHistory())
+      await handleSyncTransactions({ force_full: true, max_pages: 1 }, ctx)
+      fetchSpy.mockReset().mockRejectedValueOnce(new Error('HTTP 400 invalid cursor'))
+      await expect(handleSyncTransactions({ force_full: true }, ctx)).rejects.toThrow('HTTP 400')
+
+      fetchSpy.mockReset().mockResolvedValueOnce(makePage([]))
+      await handleSyncTransactions({ force_full: true }, ctx)
+      expect(fetchSpy.mock.calls[0]?.[0]).toBeUndefined()
+    })
+
     it('still applies the cutoff when resuming a paused INCREMENTAL sync', async () => {
       setSyncState(ctx.db, 'last_sync_date', '2024-02-01')
       vi.spyOn(ctx.client, 'fetchPage').mockImplementation(async () =>

@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.1](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.0...v3.1.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **deps:** require zod ^4.6.5 to match @chrischall/mcp-utils 2.4.0 ([#199](https://github.com/chrischall/creditkarma-mcp/issues/199)) ([e0090cf](https://github.com/chrischall/creditkarma-mcp/commit/e0090cfb7862979b0d3c88d49c8a283d9aabdf7d))
+* **deps:** upgrade @chrischall/mcp-utils to 2.4.0 and @fetchproxy/* to 3.2.0 ([#197](https://github.com/chrischall/creditkarma-mcp/issues/197)) ([59089b3](https://github.com/chrischall/creditkarma-mcp/commit/59089b3970dfb8c392c29659b07efc1a70996cfb))
+
 ## [3.1.0](https://github.com/chrischall/creditkarma-mcp/compare/v3.0.0...v3.1.0) (2026-09-19)
 
 

@@ -78,14 +78,20 @@ export function registerHealthcheckTools(
       }
     },
     probeFn: async () => {
-      // Applied, not re-resolved: `loadAuthIntoClient` would resolve again.
+      // Applied (when needed), not re-resolved: `loadAuthIntoClient` would resolve again.
       //
       // `inFlight` is always set here — the helper calls `probeFn` only after
       // `resolveCredential` has resolved a credential, and a resolver failure
       // or a null source returns before any probe. A `?? resolve()` fallback
       // would be unreachable code that no test can cover.
       const { cookies } = await (inFlight as Promise<ResolvedAuth>)
-      applyCookies(client, cookies)
+      // Never overwrite a session the shared client can still use
+      // (fleet-audit#70). After a sync has refreshed, the client holds CK's
+      // ROTATED refresh token; re-applying the resolved cookies would put the
+      // rotated-out pair back, and the next refresh would be rejected — a
+      // diagnostic breaking a working session. Only a client with nothing
+      // usable gets the resolved cookies.
+      if (!holdsUsableSession(client)) applyCookies(client, cookies)
       return client.fetchPage()
     },
     classifyThrown: (err: unknown) => {
@@ -115,4 +121,15 @@ export function registerHealthcheckTools(
         'transactions if you need those rows current.',
     },
   })
+}
+
+/**
+ * True when the client already holds credentials it can make a request with:
+ * a live access token, or a refresh token that has not expired.
+ */
+function holdsUsableSession(client: CreditKarmaClient): boolean {
+  if (!client.getToken()) return false
+  if (!client.isTokenExpired()) return true
+  const refresh = client.getRefreshToken()
+  return refresh !== null && !isJwtExpired(refresh)
 }

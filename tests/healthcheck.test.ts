@@ -18,12 +18,22 @@ const jwt = (exp: number) =>
 const LIVE = jwt(Math.floor(Date.now() / 1000) + 3600)
 const DEAD = jwt(Math.floor(Date.now() / 1000) - 3600)
 
+/** What the SHARED client already holds. Default: nothing (a fresh server). */
+interface Held { token?: string | null; refreshToken?: string | null; accessExpired?: boolean }
+
 async function call(opts: {
-  resolve?: () => Promise<{ cookies: string; source: 'env' | 'fetchproxy' }>
+  resolve?: () => Promise<{ cookies: string; source: 'env' | 'session' | 'fetchproxy' }>
   applyCookies?: () => void
   probe?: () => Promise<unknown>
+  held?: Held
 }): Promise<Result> {
-  const client = { fetchPage: opts.probe ?? (async () => ({ transactions: [] })) } as unknown as CreditKarmaClient
+  const held = opts.held ?? {}
+  const client = {
+    fetchPage: opts.probe ?? (async () => ({ transactions: [] })),
+    getToken: () => held.token ?? null,
+    getRefreshToken: () => held.refreshToken ?? null,
+    isTokenExpired: () => held.accessExpired ?? !held.token,
+  } as unknown as CreditKarmaClient
   const ctx = { client } as AppContext
   const h = await createTestHarness((server) =>
     registerHealthcheckTools(server, ctx, {
@@ -131,6 +141,55 @@ describe('ck_healthcheck', () => {
     })
     expect(r.error?.kind).toBe('credential_rejected')
     expect(r.error?.detail).toEqual({ reason: 'session_rejected' })
+  })
+})
+
+// fleet-audit#70: the healthcheck used to re-apply the resolved cookies onto
+// the SHARED client on every call. After a sync had refreshed (rotating CK's
+// refresh token) that put the rotated-out pair back, and the next refresh
+// failed with session_rejected — a diagnostic breaking a working session.
+describe('ck_healthcheck: never clobbers the live session', () => {
+  it('probes with the session the client already holds instead of re-applying cookies', async () => {
+    let applied = 0
+    const r = await call({
+      held: { token: 'rotated-acc', refreshToken: LIVE, accessExpired: false },
+      applyCookies: () => { applied++ },
+    })
+    expect(r.ok).toBe(true)
+    expect(applied).toBe(0)
+  })
+
+  it('keeps a held session whose access token lapsed but whose refresh token is live', async () => {
+    let applied = 0
+    await call({
+      held: { token: 'old-acc', refreshToken: LIVE, accessExpired: true },
+      applyCookies: () => { applied++ },
+    })
+    expect(applied).toBe(0)
+  })
+
+  it('applies the resolved cookies when the held session is spent', async () => {
+    let applied = 0
+    await call({
+      held: { token: 'old-acc', refreshToken: DEAD, accessExpired: true },
+      applyCookies: () => { applied++ },
+    })
+    expect(applied).toBe(1)
+  })
+
+  it('applies the resolved cookies when the held access token is spent and there is no refresh token', async () => {
+    let applied = 0
+    await call({
+      held: { token: 'old-acc', refreshToken: null, accessExpired: true },
+      applyCookies: () => { applied++ },
+    })
+    expect(applied).toBe(1)
+  })
+
+  it('applies the resolved cookies to a client that holds nothing yet', async () => {
+    let applied = 0
+    await call({ applyCookies: () => { applied++ } })
+    expect(applied).toBe(1)
   })
 })
 

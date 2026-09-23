@@ -16,10 +16,14 @@ vi.mock('@fetchproxy/bootstrap', () => ({
   bootstrap: (...args: unknown[]) => bootstrapMock(...args),
 }))
 
-import { resolveAuth, splitCkatCookie, loadAuthIntoClient } from '../src/auth.js'
+import { resolveAuth, resolveLocalAuth, splitCkatCookie, loadAuthIntoClient } from '../src/auth.js'
 import { CreditKarmaClient } from '../src/client.js'
 import { CkAuthError, isCkAuthError } from '../src/authError.js'
 import { makeJwt } from './helpers.js'
+import { saveSession } from '../src/session.js'
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 /** A refresh JWT whose `exp` is `secondsFromNow` away (negative ⇒ expired). */
 const refreshJwt = (secondsFromNow: number) =>
@@ -76,6 +80,250 @@ describe('resolveAuth', () => {
       const result = await resolveAuth()
 
       expect(result.cookies).toBe('CKAT=trimmed')
+    })
+  })
+
+  describe('saved session file (fleet-audit#71)', () => {
+    let dir: string
+    let savedPath: string | undefined
+    const ckat = (access: string, refresh: string) => `CKTRKID=trk; CKAT=${access}%3B${refresh}`
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'ck-resolve-'))
+      savedPath = process.env.CK_SESSION_PATH
+      process.env.CK_SESSION_PATH = join(dir, 'session')
+    })
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true })
+      process.env.CK_SESSION_PATH = savedPath
+    })
+
+    it('is read directly — no dotenv, no env var, no browser', async () => {
+      saveSession(ckat('acc', refreshJwt(3600)))
+
+      const result = await resolveAuth()
+
+      expect(bootstrapMock).not.toHaveBeenCalled()
+      expect(result.source).toBe('session')
+      expect(result.cookies).toBe(ckat('acc', refreshJwt(3600)))
+    })
+
+    it('beats a host-provided CK_COOKIES that is no fresher', async () => {
+      const refresh = refreshJwt(3600)
+      process.env.CK_COOKIES = ckat('env-acc', refreshJwt(1800))
+      saveSession(ckat('saved-acc', refresh))
+
+      const result = await resolveAuth()
+
+      expect(result.source).toBe('session')
+    })
+
+    it('yields to a CK_COOKIES whose refresh token is fresher (the user re-pasted their config)', async () => {
+      process.env.CK_COOKIES = ckat('env-acc', refreshJwt(7200))
+      saveSession(ckat('saved-acc', refreshJwt(3600)))
+
+      const result = await resolveAuth()
+
+      expect(result.source).toBe('env')
+    })
+
+    it('skips a saved session whose refresh token has expired when CK_COOKIES is live', async () => {
+      process.env.CK_COOKIES = ckat('env-acc', refreshJwt(3600))
+      saveSession(ckat('saved-acc', refreshJwt(-60)))
+
+      const result = await resolveAuth()
+
+      expect(result.source).toBe('env')
+    })
+
+    it('prefers the saved session when neither refresh token is decodable', async () => {
+      process.env.CK_COOKIES = 'CKAT=env%3Bopaque'
+      saveSession('CKAT=saved%3Bopaque')
+
+      const result = await resolveAuth()
+
+      expect(result.source).toBe('session')
+    })
+  })
+
+  describe('an expired local session never blocks the browser', () => {
+    // Every refresh rotation is saved to the session file, even for users who
+    // only ever used fetchproxy. Once that saved refresh JWT ages out (~8h), it
+    // must not shadow the browser — otherwise the server is stuck on
+    // session_stale for good, restart or not.
+    let dir: string
+    let savedPath: string | undefined
+    const ckat = (refresh: string) => `CKTRKID=trk; CKAT=acc%3B${refresh}`
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'ck-expired-'))
+      savedPath = process.env.CK_SESSION_PATH
+      process.env.CK_SESSION_PATH = join(dir, 'session')
+    })
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true })
+      process.env.CK_SESSION_PATH = savedPath
+    })
+
+    it('falls through to fetchproxy when the only saved session has expired', async () => {
+      saveSession(ckat(refreshJwt(-60)))
+      const fresh = refreshJwt(3600)
+      bootstrapMock.mockResolvedValue({
+        cookies: { CKAT: `fp-acc%3B${fresh}`, CKTRKID: 'fp-trk' },
+        localStorage: {}, sessionStorage: {}, capturedHeaders: {},
+      })
+
+      const result = await resolveAuth()
+
+      expect(bootstrapMock).toHaveBeenCalledTimes(1)
+      expect(result.source).toBe('fetchproxy')
+    })
+
+    it('lets loadAuthIntoClient recover instead of rejecting session_stale', async () => {
+      saveSession(ckat(refreshJwt(-60)))
+      const fresh = refreshJwt(3600)
+      bootstrapMock.mockResolvedValue({
+        cookies: { CKAT: `fp-acc%3B${fresh}`, CKTRKID: 'fp-trk' },
+        localStorage: {}, sessionStorage: {}, capturedHeaders: {},
+      })
+      const client = new CreditKarmaClient()
+
+      await loadAuthIntoClient(client)
+
+      expect(client.getRefreshToken()).toBe(fresh)
+    })
+
+    it('falls through to fetchproxy when an expired CK_COOKIES is all there is', async () => {
+      process.env.CK_COOKIES = ckat(refreshJwt(-60))
+      bootstrapMock.mockResolvedValue({
+        cookies: { CKAT: 'fp-acc%3Bfp-ref', CKTRKID: 'fp-trk' },
+        localStorage: {}, sessionStorage: {}, capturedHeaders: {},
+      })
+
+      const result = await resolveAuth()
+
+      expect(result.source).toBe('fetchproxy')
+    })
+
+    it('returns the expired session when fetchproxy is disabled, so the caller reports session_stale', async () => {
+      process.env.CK_DISABLE_FETCHPROXY = '1'
+      saveSession(ckat(refreshJwt(-60)))
+
+      const result = await resolveAuth()
+
+      expect(bootstrapMock).not.toHaveBeenCalled()
+      expect(result.source).toBe('session')
+      await expect(loadAuthIntoClient(new CreditKarmaClient())).rejects.toSatisfy(
+        (e: unknown) => isCkAuthError(e, 'session_stale'),
+      )
+    })
+
+    it('reports session_stale — not "nothing configured" — when fetchproxy fails too', async () => {
+      saveSession(ckat(refreshJwt(-60)))
+      bootstrapMock.mockRejectedValue(new Error('extension offline'))
+
+      const err = await resolveAuth().then(() => null, (e: unknown) => e)
+
+      expect(isCkAuthError(err, 'session_stale')).toBe(true)
+      expect((err as Error).message).toMatch(/extension offline/)
+    })
+  })
+
+  describe('a refresh token CK rejected is never handed back (fleet-audit#69)', () => {
+    let dir: string
+    let savedPath: string | undefined
+    const dead = refreshJwt(3600)
+    const ckat = (refresh: string) => `CKTRKID=trk; CKAT=acc%3B${refresh}`
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'ck-reject-'))
+      savedPath = process.env.CK_SESSION_PATH
+      process.env.CK_SESSION_PATH = join(dir, 'session')
+    })
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true })
+      process.env.CK_SESSION_PATH = savedPath
+    })
+
+    it('falls through to fetchproxy even though CK_COOKIES is set', async () => {
+      // CK_COOKIES is only a seed: once CK has rejected its refresh token,
+      // returning it again can never work, and fresh cookies may be in the browser.
+      process.env.CK_COOKIES = ckat(dead)
+      bootstrapMock.mockResolvedValue({
+        cookies: { CKAT: 'fp-acc%3Bfp-ref', CKTRKID: 'fp-trk' },
+        localStorage: {}, sessionStorage: {}, capturedHeaders: {},
+      })
+
+      const result = await resolveAuth({ rejectedRefreshToken: dead })
+
+      expect(bootstrapMock).toHaveBeenCalledTimes(1)
+      expect(result.source).toBe('fetchproxy')
+    })
+
+    it('skips an older CK_COOKIES seed too — a rotation invalidated it (fleet-audit#69)', async () => {
+      // CK_COOKIES seeded A, an in-process refresh rotated A→B and saved B, and
+      // now CK has rejected B. A is older than B, so it is dead as well: handing
+      // it back would fail the one-shot retry without ever reaching the browser.
+      const seedA = refreshJwt(1800)
+      const rotatedB = refreshJwt(3600)
+      process.env.CK_COOKIES = ckat(seedA)
+      saveSession(ckat(rotatedB))
+      bootstrapMock.mockResolvedValue({
+        cookies: { CKAT: 'fp-acc%3Bfp-ref', CKTRKID: 'fp-trk' },
+        localStorage: {}, sessionStorage: {}, capturedHeaders: {},
+      })
+
+      const result = await resolveAuth({ rejectedRefreshToken: rotatedB })
+
+      expect(bootstrapMock).toHaveBeenCalledTimes(1)
+      expect(result.source).toBe('fetchproxy')
+      expect(resolveLocalAuth({ rejectedRefreshToken: rotatedB })).toBeNull()
+    })
+
+    it('still uses a local credential issued AFTER the rejected one (another process rotated it)', async () => {
+      const rejected = refreshJwt(1800)
+      const newer = refreshJwt(3600)
+      saveSession(ckat(newer))
+      process.env.CK_COOKIES = ckat(rejected)
+
+      const result = await resolveAuth({ rejectedRefreshToken: rejected })
+
+      expect(result.source).toBe('session')
+      expect(bootstrapMock).not.toHaveBeenCalled()
+    })
+
+    it('skips every local candidate when the rejected token cannot be dated', async () => {
+      saveSession('CKAT=acc%3Bother-opaque')
+      process.env.CK_COOKIES = 'CKAT=acc%3Bopaque'
+      bootstrapMock.mockResolvedValue({
+        cookies: { CKAT: 'fp-acc%3Bfp-ref', CKTRKID: 'fp-trk' },
+        localStorage: {}, sessionStorage: {}, capturedHeaders: {},
+      })
+
+      const result = await resolveAuth({ rejectedRefreshToken: 'opaque' })
+
+      expect(result.source).toBe('fetchproxy')
+    })
+
+    it('reports session_rejected when the browser has nothing either', async () => {
+      process.env.CK_COOKIES = ckat(dead)
+      bootstrapMock.mockRejectedValue(new Error('extension offline'))
+
+      const err = await resolveAuth({ rejectedRefreshToken: dead }).then(() => null, (e: unknown) => e)
+
+      expect(isCkAuthError(err, 'session_rejected')).toBe(true)
+      expect((err as Error).message).toMatch(/extension offline/)
+      expect((err as Error).message).not.toMatch(/no CK_COOKIES set/)
+    })
+
+    it('reports session_rejected — not "nothing configured" — when fetchproxy is off', async () => {
+      process.env.CK_DISABLE_FETCHPROXY = '1'
+      process.env.CK_COOKIES = ckat(dead)
+
+      const err = await resolveAuth({ rejectedRefreshToken: dead }).then(() => null, (e: unknown) => e)
+
+      expect(isCkAuthError(err, 'session_rejected')).toBe(true)
+      expect((err as Error).message).toMatch(/session rejected/)
     })
   })
 

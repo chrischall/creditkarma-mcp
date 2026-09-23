@@ -131,6 +131,9 @@ export class CreditKarmaClient {
   /** Guards `rediscoverQueryHash` to one attempt per client. */
   private hashRediscovered = false
 
+  /** Told the rebuilt Cookie header after every successful refresh. */
+  private sessionListener: ((cookies: string) => void) | null = null
+
   constructor(token?: string, refreshToken?: string, cookies?: string) {
     if (refreshToken) this.refreshToken = refreshToken
     if (cookies) this.cookies = cookies
@@ -160,6 +163,12 @@ export class CreditKarmaClient {
         const { accessToken, refreshToken } = await this.doRefreshAccessToken()
         this.token = accessToken
         if (refreshToken) this.refreshToken = refreshToken
+        // CK just ROTATED the refresh token, so the CKAT inside our Cookie
+        // header is now the rotated-out pair — and it is sent on later refresh
+        // and discovery requests. Rebuild it, then hand it to whoever persists
+        // it, or a restart reloads the dead token (fleet-audit#69).
+        this.cookies = withCkat(this.cookies, accessToken, this.refreshToken!)
+        this.sessionListener?.(this.cookies)
         return {
           accessToken,
           // Omit an empty/absent refresh token so the manager keeps the prior one.
@@ -196,6 +205,14 @@ export class CreditKarmaClient {
 
   setCookies(cookies: string): void {
     this.cookies = cookies
+  }
+
+  /**
+   * Register the one listener told the rebuilt Cookie header after each
+   * successful refresh, i.e. each rotation of CK's refresh token.
+   */
+  onSessionRotated(listener: (cookies: string) => void): void {
+    this.sessionListener = listener
   }
 
   isTokenExpired(): boolean {
@@ -407,6 +424,17 @@ export class CreditKarmaClient {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Return `cookies` with its CKAT cookie set to `<access>%3B<refresh>`, leaving
+ * every other cookie untouched. A missing header — or a bare CKAT value, which
+ * the lenient parsers also accept — becomes a plain `CKAT=` header.
+ */
+export function withCkat(cookies: string | null, accessToken: string, refreshToken: string): string {
+  const ckat = `CKAT=${accessToken}%3B${refreshToken}`
+  if (!cookies || parseCookieHeader(cookies)['CKAT'] === undefined) return ckat
+  return cookies.replace(/(^|;\s*)CKAT=[^;]*/, `$1${ckat}`)
+}
 
 /** True only if we can decode the JWT and its `exp` claim is in the past.
  *  Returns false for un-decodable strings (let the API decide) or tokens

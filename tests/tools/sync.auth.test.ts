@@ -33,8 +33,7 @@ describe('refreshOrThrow — re-reading browser cookies', () => {
     loadAuthIntoClientMock.mockReset()
     ctx = {
       client: new CreditKarmaClient(),
-      db: initDb(':memory:'),
-      mcpJsonPath: '/tmp/.mcp.json',
+      db: initDb(':memory:')
     }
   })
 
@@ -84,6 +83,19 @@ describe('refreshOrThrow — re-reading browser cookies', () => {
 
     expect(loadAuthIntoClientMock).toHaveBeenCalledTimes(1)
     expect(refreshSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('tells the re-bootstrap which refresh token CK just rejected, so it is not handed straight back (fleet-audit#69)', async () => {
+    const rejected = refreshJwt(3600)
+    ctx.client.setRefreshToken(rejected)
+    vi.spyOn(ctx.client, 'refreshAccessToken')
+      .mockRejectedValueOnce(new CkAuthError('session_rejected', 'CK auth: session rejected', 400))
+      .mockResolvedValueOnce('fresh')
+    vi.spyOn(ctx.client, 'fetchPage').mockResolvedValue(emptyPage())
+
+    await handleSyncTransactions({}, ctx)
+
+    expect(loadAuthIntoClientMock).toHaveBeenCalledWith(ctx.client, { rejectedRefreshToken: rejected })
   })
 
   it('gives up after one re-bootstrap when the fresh session is also rejected', async () => {

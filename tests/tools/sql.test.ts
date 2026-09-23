@@ -15,7 +15,7 @@ function makeCtx(): AppContext {
     id: 'tx1', date: '2024-01-10', description: 'Coffee', status: 'posted',
     amount: -5.00, accountId: 'a1', categoryId: 'c1', merchantId: 'm1', rawJson: '{}'
   })
-  return { client: new CreditKarmaClient(), db, mcpJsonPath: '/tmp/.mcp.json' }
+  return { client: new CreditKarmaClient(), db }
 }
 
 describe('ck_query_sql', () => {

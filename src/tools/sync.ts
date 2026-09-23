@@ -91,10 +91,44 @@ export function envMaxPages(): number | undefined {
  * cursor is not a resume point. Written, `''` reads back as a cursor and
  * resumes from nowhere; skipped, the next run starts from the last real
  * checkpoint and the upserts are idempotent anyway.
+ *
+ * `paused` is true only for a DELIBERATE pause (max_pages / page_cap), where
+ * every page so far advanced cleanly and the cursor is known-good. A failed
+ * fetch or a stuck cursor also checkpoints (so a plain retry picks up where it
+ * died), but that cursor may be the very thing CK is rejecting, so force_full
+ * must not resume it: force_full is the only escape from a poisoned cursor.
  */
-function checkpoint(db: AppContext['db'], cursor: string | undefined): void {
-  if (cursor) setSyncState(db, 'last_cursor', cursor)
+function checkpoint(
+  db: AppContext['db'],
+  cursor: string | undefined,
+  mode: ResumeMode,
+  paused: boolean,
+): void {
+  if (!cursor) return
+  setSyncState(db, 'last_cursor', cursor)
+  setSyncState(db, 'resume_mode', mode)
+  if (paused) setSyncState(db, 'resume_paused', '1')
+  else db.prepare("DELETE FROM sync_state WHERE key = 'resume_paused'").run()
 }
+
+/**
+ * What kind of walk a saved `last_cursor` belongs to, stored beside it as
+ * `resume_mode` (fleet-audit#68).
+ *
+ * The cursor alone is not enough to resume correctly. A `full` walk (force_full,
+ * or a first-ever sync) has no date cutoff; an `incremental` one stops at
+ * last_sync_date - 30 days. Resuming a paused full backfill with the
+ * incremental cutoff recomputed from an OLDER completed sync stopped after one
+ * deep page, whose dates are years below the cutoff, then stamped
+ * last_sync_date and cleared the cursor, reporting "up to date" with the rest
+ * of the history never fetched. And a repeated force_full used to ignore the
+ * checkpoint entirely, re-fetching the same first N pages forever. So the mode
+ * is persisted with the cursor, a resume reuses it, and force_full honours a
+ * `full` checkpoint left by a deliberate pause (`resume_paused`) instead of
+ * restarting. Any other checkpoint (failed fetch, stuck cursor) is one
+ * force_full restarts from page 1, so it stays the escape hatch.
+ */
+type ResumeMode = 'full' | 'incremental'
 
 export async function handleSyncTransactions(
   args: SyncArgs,
@@ -115,16 +149,26 @@ export async function handleSyncTransactions(
   const today = utcDateString(new Date())
   const lastSyncDate = getSyncState(ctx.db, 'last_sync_date')
 
+  const savedCursor = getSyncState(ctx.db, 'last_cursor') ?? undefined
+  // A full-mode checkpoint (from any stop) is resumed by a plain call without
+  // the incremental cutoff. A repeated force_full resumes it too, but ONLY when
+  // it came from a deliberate pause — see checkpoint() and ResumeMode.
+  const fullCheckpoint = savedCursor !== undefined && getSyncState(ctx.db, 'resume_mode') === 'full'
+  const pausedBackfill = fullCheckpoint && getSyncState(ctx.db, 'resume_paused') === '1'
+
   // Cutoff: stop fetching pages when tx.date < (lastSyncDate - 30 days)
-  // Unless force_full=true or no prior sync
-  const cutoffDate = (!args.force_full && lastSyncDate)
+  // Unless force_full=true, no prior sync, or we are finishing a full backfill.
+  const cutoffDate = (!args.force_full && !fullCheckpoint && lastSyncDate)
     ? subtractDays(lastSyncDate, 30)
     : null
+  const mode: ResumeMode = cutoffDate ? 'incremental' : 'full'
 
-  // For force_full, always start from the beginning (ignore any saved resume cursor)
-  let cursor: string | undefined = args.force_full
+  // force_full starts from the beginning unless a paused full backfill is
+  // part-way through; an incremental checkpoint, or one left by a failure,
+  // is not one to continue.
+  let cursor: string | undefined = args.force_full && !pausedBackfill
     ? undefined
-    : (getSyncState(ctx.db, 'last_cursor') ?? undefined)
+    : savedCursor
 
   let newCount = 0
   let updatedCount = 0
@@ -146,7 +190,7 @@ export async function handleSyncTransactions(
       stopped = 'max_pages'
       // `cursor` is the next page to fetch, so checkpointing it here is what
       // makes "run it again" true rather than advice.
-      checkpoint(ctx.db, cursor)
+      checkpoint(ctx.db, cursor, mode, true)
       break
     }
     // Cap: never loop unboundedly. Surface a clear "stopped at cap" outcome and
@@ -155,7 +199,7 @@ export async function handleSyncTransactions(
       stopped = 'page_cap'
       // Reaching the cap means every page advanced the cursor (a non-advancing
       // one trips `cursor_stuck` first), so this is always a real resume point.
-      checkpoint(ctx.db, cursor)
+      checkpoint(ctx.db, cursor, mode, true)
       break
     }
     pageCount++
@@ -171,11 +215,11 @@ export async function handleSyncTransactions(
           await refreshOrThrow(ctx, true)
           page = await ctx.client.fetchPage(cursor)
         } catch (retryErr) {
-          if (cursor) setSyncState(ctx.db, 'last_cursor', cursor)
+          checkpoint(ctx.db, cursor, mode, false)
           throw retryErr
         }
       } else {
-        if (cursor) setSyncState(ctx.db, 'last_cursor', cursor)
+        checkpoint(ctx.db, cursor, mode, false)
         throw err
       }
     }
@@ -237,7 +281,7 @@ export async function handleSyncTransactions(
   if (!stopped) {
     setSyncState(ctx.db, 'last_sync_date', today)
     // Clear resume cursor on success
-    ctx.db.prepare("DELETE FROM sync_state WHERE key = 'last_cursor'").run()
+    ctx.db.prepare("DELETE FROM sync_state WHERE key IN ('last_cursor', 'resume_mode', 'resume_paused')").run()
   } else if (stopped === 'max_pages') {
     // Already checkpointed at the pause. Nothing else to do — and in
     // particular last_sync_date stays where it was, because a sync that did
@@ -246,7 +290,7 @@ export async function handleSyncTransactions(
   } else if (stopped === 'cursor_stuck') {
     // A stuck cursor is not a clean finish — checkpoint it so a LATER sync can
     // retry from the same point (the page_cap path already checkpointed above).
-    checkpoint(ctx.db, cursor)
+    checkpoint(ctx.db, cursor, mode, false)
   }
 
   const anotherRunNeeded = stopped === 'max_pages' || stopped === 'page_cap'
@@ -316,7 +360,10 @@ async function refreshOrThrow(ctx: AppContext, tokenKnownDead = false): Promise<
     // credentials we just read are also rejected, the user really does need to
     // sign in, and retrying would just re-prompt the extension in a loop.
     if (reBootstrapped || !isCkAuthError(err, 'session_rejected')) throw err
-    await loadAuthIntoClient(ctx.client)
+    // Name the token CK just refused, so resolution skips any local copy of it
+    // (CK_COOKIES, the saved session) and reaches the browser instead of
+    // handing the same dead token straight back (fleet-audit#69).
+    await loadAuthIntoClient(ctx.client, { rejectedRefreshToken: cached })
     await ctx.client.refreshAccessToken()
   }
 }
@@ -348,7 +395,11 @@ export function registerSyncTools(server: McpServer, ctx: AppContext): void {
         'another_run_needed:true and a note — run it again and it continues from where it stopped.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
-        force_full: z.boolean().optional().describe('If true, re-fetch all transactions from the beginning'),
+        force_full: z.boolean().optional().describe(
+          'If true, walk the whole history with no date cutoff. Starts from the beginning, ' +
+            'except that it continues a full backfill paused by max_pages. Also the way to ' +
+            'restart after a sync that failed or stopped on a stuck cursor.',
+        ),
         max_pages: z
           .number()
           .int()

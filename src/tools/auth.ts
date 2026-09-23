@@ -1,10 +1,9 @@
 import { z } from 'zod'
 import { rawTextResult, parseCookieHeader } from '@chrischall/mcp-utils'
-import { readFileSync, writeFileSync, existsSync, chmodSync } from 'fs'
-import { join, dirname } from 'path'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import { isJwtExpired } from '../client.js'
+import { saveSession } from '../session.js'
 
 export interface SetSessionArgs {
   /** Full Cookie header string from any CK network request */
@@ -25,7 +24,7 @@ export async function handleSetSession(args: SetSessionArgs, ctx: AppContext): P
   if (!accessToken) return 'Session not saved: could not extract a token from the provided value.'
 
   // Refuse if the refresh JWT is already expired — saving stale credentials
-  // pollutes .env and produces confusing HTTP 400s from the refresh endpoint.
+  // pollutes the saved session and produces confusing HTTP 400s from the refresh endpoint.
   if (refreshToken && isJwtExpired(refreshToken)) {
     return 'Session not saved: refresh token has already expired. Sign back into creditkarma.com — with the fetchproxy extension installed the MCP will read fresh cookies automatically, or copy a fresh Cookie header from DevTools.'
   }
@@ -34,50 +33,13 @@ export async function handleSetSession(args: SetSessionArgs, ctx: AppContext): P
   if (refreshToken) ctx.client.setRefreshToken(refreshToken)
   ctx.client.setCookies(args.cookies)
 
-  const warning = persistSession(args.cookies, ctx.mcpJsonPath)
+  // Saved where resolveAuth() reads it back directly (src/session.ts) — not a
+  // .env that the shipped .mcpb never loads (fleet-audit#71).
+  const warning = saveSession(args.cookies)
   return warning
-    ? `Session saved. Warning: ${warning}`
+    ? `Session applied for this run only. Warning: ${warning}`
     : 'Session saved. Access token, refresh token, and cookies stored.'
 }
-
-
-/** Persist session to .env. Returns a warning string or null on success. */
-export function persistSession(
-  cookies: string | null,
-  mcpJsonPath: string
-): string | null {
-  if (!cookies) return null
-
-  const envPath = join(dirname(mcpJsonPath), '.env')
-
-  let existing = ''
-  if (existsSync(envPath)) {
-    try {
-      existing = readFileSync(envPath, 'utf8')
-    } catch {
-      return '.env could not be read — session applied in memory only'
-    }
-  }
-
-  // Replace or append CK_COOKIES line
-  const line = `CK_COOKIES=${cookies}`
-  const updated = existing.match(/^CK_COOKIES=/m)
-    ? existing.replace(/^CK_COOKIES=.*/m, line)
-    : existing + (existing.endsWith('\n') || existing === '' ? '' : '\n') + line + '\n'
-
-  try {
-    writeFileSync(envPath, updated, { mode: 0o600 })
-    // writeFileSync's `mode` only applies when the file is created — re-assert
-    // 0600 so a pre-existing world-readable .env gets locked down too.
-    chmodSync(envPath, 0o600)
-  } catch {
-    return '.env could not be written — session applied in memory only'
-  }
-  return null
-}
-
-// Keep old name as alias for tests
-export const persistTokens = persistSession
 
 export function registerAuthTools(server: McpServer, ctx: AppContext): void {
   server.registerTool(

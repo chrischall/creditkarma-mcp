@@ -77,8 +77,7 @@ describe('sync does not rotate a refresh token it did not need to', () => {
     process.env.CK_DISABLE_FETCHPROXY = '1'
     ctx = {
       client: new CreditKarmaClient(),
-      db: initDb(':memory:'),
-      mcpJsonPath: '/tmp/.mcp.json',
+      db: initDb(':memory:')
     } as AppContext
   })
 

@@ -109,8 +109,8 @@ Credit Karma uses short-lived JWTs. This server handles automatic token refresh 
 `creditkarma-mcp` tries three auth paths in priority order; whichever succeeds first is used. Existing setups keep working unchanged.
 
 1. **`CK_COOKIES` env var (legacy).** Set the full Cookie header in your Claude Desktop config or `.env`. This is the path shown in the config above.
-2. **Cached session from `ck_set_session`.** Once called, the tool persists the Cookie header to `.env` as `CK_COOKIES` — so subsequent runs collapse into path 1.
-3. **fetchproxy fallback (no env vars needed — easiest onboarding).** When neither is configured, the server reads `CKAT` + `CKTRKID` cookies once at startup from your already-signed-in `creditkarma.com` tab via the [fetchproxy](https://github.com/chrischall/fetchproxy) browser extension. After that one read, all CK API calls go directly from Node — the extension is **not** in the request hot path. Install the fetchproxy extension (Chrome Web Store / Safari `.dmg`), sign into [creditkarma.com](https://www.creditkarma.com), and the MCP just works.
+2. **Saved session from `ck_set_session`.** The tool saves the Cookie header to `~/.creditkarma-mcp/session` (mode 0600; override the path with `CK_SESSION_PATH`), which the server reads back directly on every start — including from the `.mcpb` bundle. Paths 1 and 2 are both local: whichever holds the fresher refresh token wins.
+3. **fetchproxy fallback (no env vars needed — easiest onboarding).** Used when neither is configured, **or** when the local session has expired or Credit Karma has rejected its refresh token: the server reads `CKAT` + `CKTRKID` cookies from your already-signed-in `creditkarma.com` tab via the [fetchproxy](https://github.com/chrischall/fetchproxy) browser extension. After that read, all CK API calls go directly from Node — the extension is **not** in the request hot path. Install the fetchproxy extension (Chrome Web Store / Safari `.dmg`), sign into [creditkarma.com](https://www.creditkarma.com), and the MCP just works.
 
 Set `CK_DISABLE_FETCHPROXY=1` to opt out of the fallback (turns missing credentials into a hard error — useful in headless CI).
 
@@ -159,7 +159,7 @@ The server extracts the access and refresh JWTs from the `CKAT` cookie inside th
 
 Transactions are synced from Credit Karma's GraphQL API into a local SQLite database (default: `~/.creditkarma-mcp/transactions.db`). All query tools run against this local database — fast, offline-capable, and queryable with SQL.
 
-**Sync strategy**: incremental by default (fetches since last sync date with a 30-day overlap for updates). Use `force_full: true` to re-fetch everything.
+**Sync strategy**: incremental by default (fetches since last sync date with a 30-day overlap for updates). Use `force_full: true` to walk the whole history with no date cutoff — it starts from the beginning, except that a repeated `force_full` continues a backfill that paused on `max_pages`. After a sync that failed or stopped on a stuck cursor, `force_full` restarts from page 1 (a plain call retries from the saved cursor).
 
 **Auto-refresh**: if the access token has expired, the server automatically refreshes it before syncing. If the refresh token has also expired, it throws an error asking you to re-authenticate.
 
@@ -197,10 +197,10 @@ sync_state   (key, value)
 
 ## Security
 
-- Credentials are stored only in your local `.env` file (gitignored), Claude config, or your browser's cookie jar (fetchproxy path)
-- `.env` is written at mode 0600 (owner read/write only) by `ck_set_session`
-- `ck_set_session` refuses to save a refresh token whose JWT `exp` is already in the past — prevents stale credentials from polluting `.env`
-- The fetchproxy path doesn't persist anything to disk — cookies are read into memory once per MCP run, directly from the user's browser via `chrome.cookies.get`
+- Credentials are stored only in your saved-session file (`~/.creditkarma-mcp/session`, or `CK_SESSION_PATH`), Claude config / `.env`, or your browser's cookie jar (fetchproxy path)
+- The saved-session file is written at mode 0600 (owner read/write only), in a 0700 directory, by `ck_set_session` and by every token-refresh rotation
+- `ck_set_session` refuses to save a refresh token whose JWT `exp` is already in the past — prevents stale credentials from polluting the saved session
+- The fetchproxy path reads cookies directly from the user's browser via `chrome.cookies.get`, but it is **not** memory-only: every token refresh rotates the session, and the rotated `CKAT`/`CKTRKID` Cookie header is saved to the saved-session file (`~/.creditkarma-mcp/session`, or `CK_SESSION_PATH`) at mode 0600 in a 0700 directory — fetchproxy-only users included — so a restart can recover without re-reading the browser. Delete that file to remove it
 - The server never logs credentials; warnings go to stderr only (stdout is reserved for the MCP JSON-RPC stream)
 - Only `SELECT` queries are permitted via `ck_query_sql` — no writes to Credit Karma; the underlying `node:sqlite` `prepare()` also rejects multi-statement input
 
@@ -225,11 +225,11 @@ Changes land via PR, including for solo work — release notes are generated fro
 src/
   auth.ts               resolveAuth() — three-path priority (CK_COOKIES env / ck_set_session cache / fetchproxy), plus loadAuthIntoClient()
   client.ts             Credit Karma GraphQL client (auto-refresh, JWT helpers, cookie parser)
-  index.ts              MCP server entry point; bootstraps tokens from CK_COOKIES
+  index.ts              MCP server entry point; bootstraps tokens from the saved session / CK_COOKIES
   db.ts                 SQLite schema, migrations, and upsert helpers
   transaction.graphql   Documents the transactions selection set (sent as a persisted-query hash, not this text)
   tools/
-    auth.ts             ck_set_session — refuses stale refresh tokens, writes .env at 0600
+    auth.ts             ck_set_session — refuses stale refresh tokens, saves ~/.creditkarma-mcp/session at 0600
     sync.ts             ck_sync_transactions — incremental sync with resume-on-failure
     query.ts            ck_list_transactions, ck_get_recent_transactions,
                         ck_get_spending_by_category, ck_get_spending_by_merchant,

@@ -15,13 +15,20 @@
 //      `<accessJWT>%3B<refreshJWT>` URL-encoded, which the caller parses.
 //      Legacy users keep working without action.
 //
-//   2. Cached session from `ck_set_session` (existing behavior)
-//      The MCP tool `ck_set_session` accepts a pasted Cookie header and
-//      persists it to .env as CK_COOKIES — so once it's been called, this
-//      path collapses into path 1 on subsequent runs.
+//   2. Saved session (`~/.creditkarma-mcp/session`, see src/session.ts)
+//      Written by `ck_set_session` and read here with plain `fs`. It used to
+//      be a CK_COOKIES line in <install>/.env, which the shipped .mcpb never
+//      read back (fleet-audit#71). Paths 1 and 2 are both LOCAL candidates:
+//      whichever holds the fresher refresh JWT wins (the saved file on a
+//      tie), so a stale host-provided CK_COOKIES cannot shadow a newer saved
+//      session, and a freshly re-pasted CK_COOKIES still beats an old file.
+//      Only a LIVE local candidate short-circuits path 3: an expired one (or
+//      one no newer than a refresh token CK just rejected) never shadows the
+//      browser — it is reported as session_stale only when fetchproxy is
+//      disabled or fails.
 //
 //   3. fetchproxy fallback (new)
-//      When no Cookie header is set, lift the user's session out of their
+//      When no usable Cookie header is set, lift the user's session out of their
 //      signed-in creditkarma.com browser tab via the fetchproxy 0.3.0
 //      extension. `@fetchproxy/bootstrap` spins up a one-shot WebSocket
 //      bridge, asks the extension for the `CKAT` and `CKTRKID` cookies via
@@ -60,10 +67,11 @@
 
 import { bootstrap } from '@fetchproxy/bootstrap'
 import { classifyBridgeError, FetchproxyBridgeDownError } from '@chrischall/mcp-utils/fetchproxy'
-import { readEnvVar, parseBoolEnv, parseCookieHeader } from '@chrischall/mcp-utils'
+import { readEnvVar, parseBoolEnv, parseCookieHeader, decodeJwtClaim } from '@chrischall/mcp-utils'
 import pkg from '../package.json' with { type: 'json' }
 import { CreditKarmaClient, isJwtExpired } from './client.js'
 import { CkAuthError } from './authError.js'
+import { readSavedSession, saveSession } from './session.js'
 
 /** Result of resolving CK auth, regardless of which path was taken. */
 export interface ResolvedAuth {
@@ -74,7 +82,7 @@ export interface ResolvedAuth {
    */
   cookies: string
   /** Which path produced the cookies. Diagnostics + future cache keying. */
-  source: 'env' | 'fetchproxy'
+  source: 'env' | 'session' | 'fetchproxy'
 }
 
 /** True if the user has explicitly disabled the fetchproxy fallback. Accepts
@@ -92,63 +100,29 @@ function fetchproxyDisabled(): boolean {
  * should not branch on `source`. The field exists for logging / future
  * cache-keying only.
  */
-export async function resolveAuth(): Promise<ResolvedAuth> {
-  // ── Path 1: CK_COOKIES env var (unchanged from pre-fetchproxy behavior).
-  const envCookies = readEnvVar('CK_COOKIES')
-  if (envCookies) {
-    return { cookies: envCookies, source: 'env' }
-  }
+export interface ResolveOptions {
+  /**
+   * A refresh token Credit Karma has just REJECTED. Any local candidate
+   * carrying it is skipped: handing it straight back can never work, and the
+   * browser may hold fresh cookies right now. CK_COOKIES is only a seed, so it
+   * must not shadow the fetchproxy path once it is known dead (fleet-audit#69).
+   */
+  rejectedRefreshToken?: string | null
+}
 
-  // ── Path 2: fetchproxy fallback (new).
-  //   (Path 2 — cached session from ck_set_session — also lands here at the
-  //    env-var step on subsequent runs, since that tool writes CK_COOKIES
-  //    to .env. So this branch only fires when neither env var nor cache
-  //    has been seeded.)
+export async function resolveAuth(opts: ResolveOptions = {}): Promise<ResolvedAuth> {
+  // ── Paths 1 + 2: CK_COOKIES env var / saved session file — but only a LIVE
+  //    one short-circuits the browser. Every refresh rotation is saved to the
+  //    session file, fetchproxy-only users included, so an expired local
+  //    session is routine (~8h idle) and must never shadow fresh browser
+  //    cookies: that would pin the server on session_stale across restarts.
+  const local = resolveLocalAuth(opts)
+  if (local && !localIsExpired(local)) return local
+
+  // ── Path 3: fetchproxy — nothing usable locally.
   if (!fetchproxyDisabled()) {
     try {
-      const session = await bootstrap({
-        serverName: pkg.name,
-        version: pkg.version,
-        // CK serves www.creditkarma.com (web) and api.creditkarma.com
-        // (GraphQL). Both share the apex domain; the extension matches on
-        // suffix so listing the apex covers any subdomain.
-        domains: ['creditkarma.com'],
-        declare: {
-          // CKAT contains the access + refresh JWTs joined by `%3B`. CKTRKID
-          // is sent as the `ck-cookie-id` header on refresh requests; without
-          // it the refresh endpoint 403s. Both are HttpOnly — invisible to
-          // page JS — but fetchproxy 0.3.0's `read_cookies` uses
-          // `chrome.cookies.get` which sees HttpOnly cookies.
-          cookies: ['CKAT', 'CKTRKID'],
-          localStorage: [],
-          sessionStorage: [],
-          captureHeaders: [],
-        },
-      })
-
-      const ckat = session.cookies['CKAT']
-      const cktrkid = session.cookies['CKTRKID']
-      if (!ckat) {
-        throw new CkAuthError(
-          'no_credentials',
-          'CKAT cookie missing on creditkarma.com. ' +
-            'Sign into creditkarma.com in your browser (with the fetchproxy extension installed) and retry.',
-        )
-      }
-      if (!cktrkid) {
-        throw new CkAuthError(
-          'no_credentials',
-          'CKTRKID cookie missing on creditkarma.com. ' +
-            'Sign into creditkarma.com in your browser (with the fetchproxy extension installed) and retry.',
-        )
-      }
-
-      // Synthesize a Cookie header identical in shape to what `ck_set_session`
-      // accepts. The existing parser in `src/index.ts` / `src/tools/auth.ts`
-      // extracts CKAT and splits its `<accessJWT>%3B<refreshJWT>` payload
-      // without caring how the header was assembled.
-      const cookies = `CKTRKID=${cktrkid}; CKAT=${ckat}`
-      return { cookies, source: 'fetchproxy' }
+      return await readFromFetchproxy()
     } catch (e) {
       // 0.8.0+ typed-error discrimination. The fetchproxy server already
       // retries once on SW eviction (bridgeReviveDelayMs=2000 default), so
@@ -169,12 +143,45 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
         )
       }
       const msg = e instanceof Error ? e.message : String(e)
+      // A local session exists but is dead, and the browser could not replace
+      // it: say which, rather than claiming nothing is configured.
+      if (local) {
+        throw new CkAuthError(
+          'session_stale',
+          'CK auth: session stale — the saved/CK_COOKIES refresh token has expired, and the ' +
+            `fetchproxy fallback could not read fresh cookies: ${msg}. Sign back into ` +
+            'creditkarma.com in the browser, or paste a fresh Cookie header via ck_set_session.',
+        )
+      }
+      if (opts.rejectedRefreshToken) {
+        throw new CkAuthError(
+          'session_rejected',
+          'CK auth: session rejected — Credit Karma refused the current session, and the ' +
+            `fetchproxy fallback could not read fresh cookies: ${msg}. Sign back into ` +
+            'creditkarma.com in the browser, or paste a fresh Cookie header via ck_set_session.',
+        )
+      }
       const wrapped = `CK auth: no credentials readable — no CK_COOKIES set, and fetchproxy fallback failed: ${msg}`
       // Preserve the reason when the inner throw already classified itself
-      // (the CKAT/CKTRKID-missing branches above); anything else that escaped
+      // (the CKAT/CKTRKID-missing branches); anything else that escaped
       // bootstrap is an unknown failure and stays an untyped Error.
       throw e instanceof CkAuthError ? new CkAuthError(e.reason, wrapped) : new Error(wrapped)
     }
+  }
+
+  // fetchproxy is off. An expired local session is still returned, so the
+  // caller reports session_stale rather than "nothing configured".
+  if (local) return local
+
+  // Something local WAS configured, but CK rejected it and there is nowhere
+  // else to look. That is a rejection, not "nothing configured".
+  if (opts.rejectedRefreshToken && resolveLocalAuth() !== null) {
+    throw new CkAuthError(
+      'session_rejected',
+      'CK auth: session rejected — Credit Karma refused the saved/CK_COOKIES session and the ' +
+        'fetchproxy fallback is disabled. Sign back into creditkarma.com and paste a fresh ' +
+        'Cookie header via ck_set_session (or unset CK_DISABLE_FETCHPROXY).',
+    )
   }
 
   // ── Path 4: nothing configured. Surface all three fixes side-by-side so
@@ -186,6 +193,108 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
       'or install the fetchproxy extension and sign into creditkarma.com ' +
       '(unset CK_DISABLE_FETCHPROXY if it is set).',
   )
+}
+
+/** Lift CKAT + CKTRKID out of the signed-in browser tab (path 3). */
+async function readFromFetchproxy(): Promise<ResolvedAuth> {
+  const session = await bootstrap({
+    serverName: pkg.name,
+    version: pkg.version,
+    // CK serves www.creditkarma.com (web) and api.creditkarma.com
+    // (GraphQL). Both share the apex domain; the extension matches on
+    // suffix so listing the apex covers any subdomain.
+    domains: ['creditkarma.com'],
+    declare: {
+      // CKAT contains the access + refresh JWTs joined by `%3B`. CKTRKID
+      // is sent as the `ck-cookie-id` header on refresh requests; without
+      // it the refresh endpoint 403s. Both are HttpOnly — invisible to
+      // page JS — but fetchproxy 0.3.0's `read_cookies` uses
+      // `chrome.cookies.get` which sees HttpOnly cookies.
+      cookies: ['CKAT', 'CKTRKID'],
+      localStorage: [],
+      sessionStorage: [],
+      captureHeaders: [],
+    },
+  })
+
+  const ckat = session.cookies['CKAT']
+  const cktrkid = session.cookies['CKTRKID']
+  if (!ckat) {
+    throw new CkAuthError(
+      'no_credentials',
+      'CKAT cookie missing on creditkarma.com. ' +
+        'Sign into creditkarma.com in your browser (with the fetchproxy extension installed) and retry.',
+    )
+  }
+  if (!cktrkid) {
+    throw new CkAuthError(
+      'no_credentials',
+      'CKTRKID cookie missing on creditkarma.com. ' +
+        'Sign into creditkarma.com in your browser (with the fetchproxy extension installed) and retry.',
+    )
+  }
+
+  // Synthesize a Cookie header identical in shape to what `ck_set_session`
+  // accepts. The existing parser in `src/index.ts` / `src/tools/auth.ts`
+  // extracts CKAT and splits its `<accessJWT>%3B<refreshJWT>` payload
+  // without caring how the header was assembled.
+  return { cookies: `CKTRKID=${cktrkid}; CKAT=${ckat}`, source: 'fetchproxy' }
+}
+
+/** True when a local candidate's refresh JWT has provably expired. */
+function localIsExpired(c: ResolvedAuth): boolean {
+  const { refreshToken } = splitCkatCookie(c.cookies)
+  return refreshToken !== null && isJwtExpired(refreshToken)
+}
+
+/** The refresh JWT's `exp`, or undefined when it is absent or undecodable. */
+function refreshExp(cookies: string): number | undefined {
+  const { refreshToken } = splitCkatCookie(cookies)
+  const exp = refreshToken ? decodeJwtClaim(refreshToken, 'exp') : undefined
+  return typeof exp === 'number' ? exp : undefined
+}
+
+/**
+ * The best LOCAL credential — the saved session file or CK_COOKIES — without
+ * touching the browser. Null when neither is set.
+ *
+ * Shared by `resolveAuth()` and server startup so both pick the same one.
+ * Candidates are ranked live-before-expired, then by the refresh JWT's `exp`
+ * (fresher first), then saved-file-before-env: every rotation and every
+ * `ck_set_session` writes the file, so on equal footing it is the newer one.
+ * An expired candidate is still returned when it is all there is; it is
+ * `resolveAuth()` that decides to try the browser before settling for it.
+ *
+ * With `rejectedRefreshToken`, only candidates issued AFTER the rejected
+ * token survive (their refresh `exp` is later). The rejected token itself is
+ * dead, and so is anything older: every refresh rotation invalidates its
+ * predecessor, so a CK_COOKIES seed that was rotated into the rejected token
+ * is dead too (fleet-audit#69). A strictly newer one — say another server
+ * process rotated and saved it — is still worth trying. When the rejected
+ * token cannot be dated, no local candidate can be shown to be newer, so none
+ * survives.
+ */
+export function resolveLocalAuth(opts: ResolveOptions = {}): ResolvedAuth | null {
+  let candidates: ResolvedAuth[] = []
+  const saved = readSavedSession()
+  if (saved) candidates.push({ cookies: saved, source: 'session' })
+  const env = readEnvVar('CK_COOKIES')
+  if (env) candidates.push({ cookies: env, source: 'env' })
+  if (opts.rejectedRefreshToken) {
+    const rejectedExp = decodeJwtClaim(opts.rejectedRefreshToken, 'exp')
+    candidates = candidates.filter((c) => {
+      if (splitCkatCookie(c.cookies).refreshToken === opts.rejectedRefreshToken) return false
+      const exp = refreshExp(c.cookies)
+      return typeof rejectedExp === 'number' && exp !== undefined && exp > rejectedExp
+    })
+  }
+  if (candidates.length === 0) return null
+
+  const rank = (c: ResolvedAuth): [number, number] => [localIsExpired(c) ? 0 : 1, refreshExp(c.cookies) ?? 0]
+  // Array.prototype.sort is stable, so equal ranks keep saved-file-first.
+  return candidates
+    .map((c) => ({ c, r: rank(c) }))
+    .sort((a, b) => b.r[0] - a.r[0] || b.r[1] - a.r[1])[0].c
 }
 
 /**
@@ -224,9 +333,25 @@ export function splitCkatCookie(cookies: string): {
  * client has fresh CKAT + CKTRKID and the normal `refreshAccessToken()`
  * flow takes over.
  */
-export async function loadAuthIntoClient(client: CreditKarmaClient): Promise<void> {
-  const { cookies } = await resolveAuth()
+export async function loadAuthIntoClient(
+  client: CreditKarmaClient,
+  opts?: ResolveOptions,
+): Promise<void> {
+  const { cookies } = await resolveAuth(opts)
   applyCookiesToClient(client, cookies)
+}
+
+/**
+ * Save every rotated session the client reports to the saved-session file, so
+ * the next start (and the next `resolveAuth()`) uses the live refresh token
+ * instead of the rotated-out one still sitting in CK_COOKIES (fleet-audit#69).
+ * A failed write is logged to stderr — stdout is the JSON-RPC stream.
+ */
+export function persistRotatedSessions(client: CreditKarmaClient): void {
+  client.onSessionRotated((cookies) => {
+    const warning = saveSession(cookies)
+    if (warning) console.error(`[creditkarma-mcp] Warning: rotated session not saved — ${warning}`)
+  })
 }
 
 /**

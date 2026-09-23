@@ -62,7 +62,7 @@ Three onboarding paths, in priority order:
 
 **1. fetchproxy extension (easiest — no env vars):** Install the [fetchproxy 0.3.0 extension](https://github.com/chrischall/fetchproxy), sign into creditkarma.com once, and leave `CK_COOKIES` **unset**. The MCP reads HttpOnly `CKAT` + `CKTRKID` cookies on the first tool call via `chrome.cookies.get`, then operates direct-to-API from Node.
 
-**2. ck_set_session MCP tool:** From within Claude, call `ck_set_session` with a Cookie header you copied from DevTools (see below). The tool persists it to `.env`.
+**2. ck_set_session MCP tool:** From within Claude, call `ck_set_session` with a Cookie header you copied from DevTools (see below). The tool saves it to `~/.creditkarma-mcp/session` (0600), which the server reads back on every start.
 
 **3. Manual (DevTools):**
 1. Log in to [creditkarma.com](https://www.creditkarma.com) in Chrome
@@ -90,7 +90,7 @@ The MCP handles auth automatically once any of the three paths is configured.
 ### Sync
 | Tool | Description |
 |------|-------------|
-| `ck_sync_transactions(force_full?)` | Sync transactions to local SQLite. Incremental by default (since last sync − 30 days). `force_full=true` re-fetches everything. |
+| `ck_sync_transactions(force_full?)` | Sync transactions to local SQLite. Incremental by default (since last sync − 30 days). `force_full=true` walks the whole history with no date cutoff — from the beginning, except that it continues a backfill paused by `max_pages`; after a failed or stuck sync it restarts from page 1. |
 
 ### Query
 | Tool | Description |

@@ -286,6 +286,97 @@ describe('ck_sync_transactions', () => {
     expect(i).toBeGreaterThan(1)
   })
 
+  describe('resuming a paused force_full backfill (fleet-audit#68)', () => {
+    // History deep enough to sit below any incremental cutoff: a resumed
+    // backfill page is YEARS old, while last_sync_date is recent.
+    const deepHistory = (): (() => Promise<TransactionPage>) => {
+      let i = 0
+      return async () => {
+        i++
+        return makePage([makeTx(`old${i}`, '2019-01-01')], i < 5, `deep-${i}`)
+      }
+    }
+
+    it('drains the backfill when resumed WITHOUT force_full after a prior completed sync', async () => {
+      // An earlier sync completed, so the incremental cutoff is live.
+      setSyncState(ctx.db, 'last_sync_date', '2024-02-01')
+      const fetchSpy = vi.spyOn(ctx.client, 'fetchPage').mockImplementation(deepHistory())
+
+      const first = await handleSyncTransactions({ force_full: true, max_pages: 2 }, ctx)
+      expect(first.another_run_needed).toBe(true)
+
+      // The "run it again" the note asks for — without force_full.
+      const second = await handleSyncTransactions({}, ctx)
+
+      // The cutoff must NOT truncate a backfill: all five pages are fetched.
+      expect(fetchSpy).toHaveBeenCalledTimes(5)
+      expect(second.pages_fetched).toBe(3)
+      expect(second.another_run_needed).toBe(false)
+      const n = ctx.db.prepare('SELECT COUNT(*) as n FROM transactions').get() as { n: number }
+      expect(n.n).toBe(5)
+      expect(getSyncState(ctx.db, 'last_cursor')).toBeNull()
+    })
+
+    it('continues from the checkpoint when force_full is repeated, instead of restarting forever', async () => {
+      const fetchSpy = vi.spyOn(ctx.client, 'fetchPage').mockImplementation(deepHistory())
+
+      await handleSyncTransactions({ force_full: true, max_pages: 2 }, ctx)
+      fetchSpy.mockClear()
+      await handleSyncTransactions({ force_full: true, max_pages: 2 }, ctx)
+
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe('deep-2')
+    })
+
+    it('forgets the backfill once it has drained, so the next force_full starts from the top', async () => {
+      const fetchSpy = vi.spyOn(ctx.client, 'fetchPage').mockImplementation(deepHistory())
+      await handleSyncTransactions({ force_full: true, max_pages: 2 }, ctx)
+      await handleSyncTransactions({}, ctx)
+      expect(getSyncState(ctx.db, 'resume_mode')).toBeNull()
+
+      fetchSpy.mockClear()
+      fetchSpy.mockResolvedValueOnce(makePage([]))
+      await handleSyncTransactions({ force_full: true }, ctx)
+      expect(fetchSpy.mock.calls[0]?.[0]).toBeUndefined()
+    })
+
+    it('keeps the backfill intent when a force_full page fetch fails mid-walk', async () => {
+      setSyncState(ctx.db, 'last_sync_date', '2024-02-01')
+      vi.spyOn(ctx.client, 'fetchPage')
+        .mockResolvedValueOnce(makePage([makeTx('old1', '2019-01-01')], true, 'deep-1'))
+        .mockRejectedValueOnce(new Error('HTTP 500'))
+      await expect(handleSyncTransactions({ force_full: true }, ctx)).rejects.toThrow('HTTP 500')
+      expect(getSyncState(ctx.db, 'resume_mode')).toBe('full')
+
+      const fetchSpy = vi.spyOn(ctx.client, 'fetchPage').mockClear()
+        .mockResolvedValueOnce(makePage([makeTx('old2', '2018-01-01')], true, 'deep-2'))
+        .mockResolvedValueOnce(makePage([makeTx('old3', '2017-01-01')]))
+      await handleSyncTransactions({}, ctx)
+      expect(fetchSpy).toHaveBeenCalledTimes(2)
+    })
+
+    it('still applies the cutoff when resuming a paused INCREMENTAL sync', async () => {
+      setSyncState(ctx.db, 'last_sync_date', '2024-02-01')
+      vi.spyOn(ctx.client, 'fetchPage').mockImplementation(async () =>
+        makePage([makeTx(`r${Math.random()}`, '2024-02-10')], true, `inc-${Math.random()}`))
+      await handleSyncTransactions({ max_pages: 1 }, ctx)
+      expect(getSyncState(ctx.db, 'resume_mode')).toBe('incremental')
+
+      const fetchSpy = vi.spyOn(ctx.client, 'fetchPage').mockClear()
+        .mockResolvedValueOnce(makePage([makeTx('x', '2019-01-01')], true, 'deeper'))
+      await handleSyncTransactions({}, ctx)
+      // Below the cutoff → done after one page, as incremental sync always was.
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('a force_full does not hijack a paused incremental checkpoint — it starts from the top', async () => {
+      setSyncState(ctx.db, 'last_cursor', 'inc-cursor')
+      setSyncState(ctx.db, 'resume_mode', 'incremental')
+      const fetchSpy = vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([]))
+      await handleSyncTransactions({ force_full: true }, ctx)
+      expect(fetchSpy.mock.calls[0]?.[0]).toBeUndefined()
+    })
+  })
+
   describe('per-call page budget (hosted deployments)', () => {
     /**
      * The fleet pattern for a walk that cannot finish in one call

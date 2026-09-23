@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.2](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.1...v3.1.2) (2026-09-23)
+
+
+### Bug Fixes
+
+* resume paused syncs correctly and make saved and rotated sessions survive restarts ([#200](https://github.com/chrischall/creditkarma-mcp/issues/200)) ([62bf919](https://github.com/chrischall/creditkarma-mcp/commit/62bf919a19442f010657e81f0541b2344a7802d4))
+
 ## [3.1.1](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.0...v3.1.1) (2026-09-23)
 
 

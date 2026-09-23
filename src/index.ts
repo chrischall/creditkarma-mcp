@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url'
 import { CreditKarmaClient, warnIfRefreshTokenExpired } from './client.js'
 import { initDb, backfillAccountIds } from './db.js'
 import type { Database } from './db.js'
-import { resolveLocalAuth, splitCkatCookie } from './auth.js'
+import { resolveLocalAuth, splitCkatCookie, persistRotatedSessions } from './auth.js'
 
 import { registerAuthTools } from './tools/auth.js'
 import { registerHealthcheckTools } from './tools/healthcheck.js'
@@ -51,6 +51,7 @@ async function main() {
     client: new CreditKarmaClient(token, refreshToken, cookies),
     db,
   }
+  persistRotatedSessions(ctx.client)
 
   await runMcp({
     name: 'creditkarma-mcp',

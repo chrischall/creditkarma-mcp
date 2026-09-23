@@ -146,6 +146,59 @@ describe('resolveAuth', () => {
     })
   })
 
+  describe('a refresh token CK rejected is never handed back (fleet-audit#69)', () => {
+    let dir: string
+    let savedPath: string | undefined
+    const dead = refreshJwt(3600)
+    const ckat = (refresh: string) => `CKTRKID=trk; CKAT=acc%3B${refresh}`
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'ck-reject-'))
+      savedPath = process.env.CK_SESSION_PATH
+      process.env.CK_SESSION_PATH = join(dir, 'session')
+    })
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true })
+      process.env.CK_SESSION_PATH = savedPath
+    })
+
+    it('falls through to fetchproxy even though CK_COOKIES is set', async () => {
+      // CK_COOKIES is only a seed: once CK has rejected its refresh token,
+      // returning it again can never work, and fresh cookies may be in the browser.
+      process.env.CK_COOKIES = ckat(dead)
+      bootstrapMock.mockResolvedValue({
+        cookies: { CKAT: 'fp-acc%3Bfp-ref', CKTRKID: 'fp-trk' },
+        localStorage: {}, sessionStorage: {}, capturedHeaders: {},
+      })
+
+      const result = await resolveAuth({ rejectedRefreshToken: dead })
+
+      expect(bootstrapMock).toHaveBeenCalledTimes(1)
+      expect(result.source).toBe('fetchproxy')
+    })
+
+    it('uses the other local credential when only one was rejected', async () => {
+      const live = refreshJwt(1800)
+      saveSession(ckat(dead))
+      process.env.CK_COOKIES = ckat(live)
+
+      const result = await resolveAuth({ rejectedRefreshToken: dead })
+
+      expect(result.source).toBe('env')
+      expect(bootstrapMock).not.toHaveBeenCalled()
+    })
+
+    it('reports session_rejected — not "nothing configured" — when fetchproxy is off', async () => {
+      process.env.CK_DISABLE_FETCHPROXY = '1'
+      process.env.CK_COOKIES = ckat(dead)
+
+      const err = await resolveAuth({ rejectedRefreshToken: dead }).then(() => null, (e: unknown) => e)
+
+      expect(isCkAuthError(err, 'session_rejected')).toBe(true)
+      expect((err as Error).message).toMatch(/session rejected/)
+    })
+  })
+
   describe('path 2: fetchproxy fallback', () => {
     it('reads CKAT + CKTRKID cookies via bootstrap() and builds a Cookie header', async () => {
       bootstrapMock.mockResolvedValue({

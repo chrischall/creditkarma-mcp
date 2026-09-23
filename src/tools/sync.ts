@@ -342,7 +342,10 @@ async function refreshOrThrow(ctx: AppContext, tokenKnownDead = false): Promise<
     // credentials we just read are also rejected, the user really does need to
     // sign in, and retrying would just re-prompt the extension in a loop.
     if (reBootstrapped || !isCkAuthError(err, 'session_rejected')) throw err
-    await loadAuthIntoClient(ctx.client)
+    // Name the token CK just refused, so resolution skips any local copy of it
+    // (CK_COOKIES, the saved session) and reaches the browser instead of
+    // handing the same dead token straight back (fleet-audit#69).
+    await loadAuthIntoClient(ctx.client, { rejectedRefreshToken: cached })
     await ctx.client.refreshAccessToken()
   }
 }

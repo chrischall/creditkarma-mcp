@@ -67,7 +67,7 @@ import { readEnvVar, parseBoolEnv, parseCookieHeader, decodeJwtClaim } from '@ch
 import pkg from '../package.json' with { type: 'json' }
 import { CreditKarmaClient, isJwtExpired } from './client.js'
 import { CkAuthError } from './authError.js'
-import { readSavedSession } from './session.js'
+import { readSavedSession, saveSession } from './session.js'
 
 /** Result of resolving CK auth, regardless of which path was taken. */
 export interface ResolvedAuth {
@@ -96,9 +96,19 @@ function fetchproxyDisabled(): boolean {
  * should not branch on `source`. The field exists for logging / future
  * cache-keying only.
  */
-export async function resolveAuth(): Promise<ResolvedAuth> {
+export interface ResolveOptions {
+  /**
+   * A refresh token Credit Karma has just REJECTED. Any local candidate
+   * carrying it is skipped: handing it straight back can never work, and the
+   * browser may hold fresh cookies right now. CK_COOKIES is only a seed, so it
+   * must not shadow the fetchproxy path once it is known dead (fleet-audit#69).
+   */
+  rejectedRefreshToken?: string | null
+}
+
+export async function resolveAuth(opts: ResolveOptions = {}): Promise<ResolvedAuth> {
   // ── Paths 1 + 2: CK_COOKIES env var / saved session file.
-  const local = resolveLocalAuth()
+  const local = resolveLocalAuth(opts)
   if (local) return local
 
   // ── Path 3: fetchproxy fallback — only when nothing local is configured.
@@ -175,6 +185,17 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
     }
   }
 
+  // Something local WAS configured, but CK rejected it and there is nowhere
+  // else to look. That is a rejection, not "nothing configured".
+  if (opts.rejectedRefreshToken && resolveLocalAuth() !== null) {
+    throw new CkAuthError(
+      'session_rejected',
+      'CK auth: session rejected — Credit Karma refused the saved/CK_COOKIES session and the ' +
+        'fetchproxy fallback is disabled. Sign back into creditkarma.com and paste a fresh ' +
+        'Cookie header via ck_set_session (or unset CK_DISABLE_FETCHPROXY).',
+    )
+  }
+
   // ── Path 4: nothing configured. Surface all three fixes side-by-side so
   //    the user can pick whichever fits their setup.
   throw new CkAuthError(
@@ -197,12 +218,17 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
  * An expired candidate is still returned when it is all there is, so the
  * caller reports `session_stale` rather than "nothing configured".
  */
-export function resolveLocalAuth(): ResolvedAuth | null {
-  const candidates: ResolvedAuth[] = []
+export function resolveLocalAuth(opts: ResolveOptions = {}): ResolvedAuth | null {
+  let candidates: ResolvedAuth[] = []
   const saved = readSavedSession()
   if (saved) candidates.push({ cookies: saved, source: 'session' })
   const env = readEnvVar('CK_COOKIES')
   if (env) candidates.push({ cookies: env, source: 'env' })
+  if (opts.rejectedRefreshToken) {
+    candidates = candidates.filter(
+      (c) => splitCkatCookie(c.cookies).refreshToken !== opts.rejectedRefreshToken,
+    )
+  }
   if (candidates.length === 0) return null
 
   const rank = (c: ResolvedAuth): [number, number] => {
@@ -253,9 +279,25 @@ export function splitCkatCookie(cookies: string): {
  * client has fresh CKAT + CKTRKID and the normal `refreshAccessToken()`
  * flow takes over.
  */
-export async function loadAuthIntoClient(client: CreditKarmaClient): Promise<void> {
-  const { cookies } = await resolveAuth()
+export async function loadAuthIntoClient(
+  client: CreditKarmaClient,
+  opts?: ResolveOptions,
+): Promise<void> {
+  const { cookies } = await resolveAuth(opts)
   applyCookiesToClient(client, cookies)
+}
+
+/**
+ * Save every rotated session the client reports to the saved-session file, so
+ * the next start (and the next `resolveAuth()`) uses the live refresh token
+ * instead of the rotated-out one still sitting in CK_COOKIES (fleet-audit#69).
+ * A failed write is logged to stderr — stdout is the JSON-RPC stream.
+ */
+export function persistRotatedSessions(client: CreditKarmaClient): void {
+  client.onSessionRotated((cookies) => {
+    const warning = saveSession(cookies)
+    if (warning) console.error(`[creditkarma-mcp] Warning: rotated session not saved — ${warning}`)
+  })
 }
 
 /**

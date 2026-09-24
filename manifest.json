@@ -84,7 +84,7 @@
     },
     {
       "name": "ck_query_sql",
-      "description": "Execute a raw SQL SELECT query against the transactions database"
+      "description": "Execute a raw SQL SELECT query against the transactions database (capped at max_rows, default 500)"
     }
   ],
   "compatibility": {

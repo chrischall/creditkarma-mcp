@@ -100,7 +100,7 @@ The MCP handles auth automatically once any of the three paths is configured.
 | `ck_get_spending_by_category(start_date?, end_date?)` | Spending totals grouped by category |
 | `ck_get_spending_by_merchant(start_date?, end_date?, limit?)` | Spending totals grouped by merchant |
 | `ck_get_account_summary` | Transaction counts and totals per account |
-| `ck_query_sql(sql)` | Read-only SQL query against the local database (SELECT only) |
+| `ck_query_sql(sql, max_rows?)` | Read-only SQL query against the local database (SELECT only; at most `max_rows` rows, default 500 / max 5000 — `truncated: true` means page with LIMIT/OFFSET or aggregate) |
 
 ## Workflows
 

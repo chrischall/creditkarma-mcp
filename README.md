@@ -153,7 +153,7 @@ The server extracts the access and refresh JWTs from the `CKAT` cookie inside th
 | `ck_get_spending_by_category` | Spending totals grouped by category |
 | `ck_get_spending_by_merchant` | Spending totals grouped by merchant |
 | `ck_get_account_summary` | Transaction counts and totals by account |
-| `ck_query_sql` | Run a read-only SQL query against the local database |
+| `ck_query_sql` | Run a read-only SQL query against the local database (returns at most `max_rows` rows, default 500 / max 5000, with `truncated: true` when there were more) |
 
 ## How it works
 

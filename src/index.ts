@@ -1,11 +1,11 @@
 import { readEnvVar, loadDotenvSafely, runMcp } from '@chrischall/mcp-utils'
-import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { CreditKarmaClient, warnIfRefreshTokenExpired } from './client.js'
 import { initDb, backfillAccountIds } from './db.js'
 import type { Database } from './db.js'
 import { resolveLocalAuth, splitCkatCookie, persistRotatedSessions } from './auth.js'
+import { dbPath as defaultDbPath } from './session.js'
 
 import { registerAuthTools } from './tools/auth.js'
 import { registerHealthcheckTools } from './tools/healthcheck.js'
@@ -26,7 +26,7 @@ export interface AppContext {
 }
 
 async function main() {
-  const dbPath = readEnvVar('CK_DB_PATH') || join(homedir(), '.creditkarma-mcp', 'transactions.db')
+  const dbPath = defaultDbPath()
   // Seed from the same local credential resolveAuth() would pick — the saved
   // session file (ck_set_session / rotated tokens) or CK_COOKIES, whichever is
   // fresher — so a restart never goes back to a rotated-out refresh token.

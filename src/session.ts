@@ -16,7 +16,7 @@
 // session` beside the default database (override with CK_SESSION_PATH), and
 // `resolveAuth()` reads it with plain `fs` — no loader, no bundling caveat.
 
-import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, unlinkSync } from 'fs'
 import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { readEnvVar } from '@chrischall/mcp-utils'
@@ -50,4 +50,24 @@ export function saveSession(cookies: string, path: string = sessionPath()): stri
     return `${path} could not be written — session applied in memory only and will not survive a restart`
   }
   return null
+}
+
+/** Local transactions database path (CK_DB_PATH, else beside the session file). */
+export function dbPath(): string {
+  return readEnvVar('CK_DB_PATH') || join(homedir(), '.creditkarma-mcp', 'transactions.db')
+}
+
+/**
+ * Delete the saved-session file (`ck_forget_session`, fleet-audit#1158).
+ * `deleted` is true only when a file was actually removed; a failure is
+ * reported as a `warning` rather than thrown.
+ */
+export function deleteSavedSession(path: string = sessionPath()): { deleted: boolean; warning?: string } {
+  if (!existsSync(path)) return { deleted: false }
+  try {
+    unlinkSync(path)
+  } catch {
+    return { deleted: false, warning: `${path} could not be deleted — remove it by hand` }
+  }
+  return { deleted: true }
 }

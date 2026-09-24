@@ -86,6 +86,7 @@ The MCP handles auth automatically once any of the three paths is configured.
 | Tool | Description |
 |------|-------------|
 | `ck_set_session(cookies)` | Store credentials — paste the full Cookie header from a signed-in creditkarma.com request |
+| `ck_forget_session()` | Delete the saved-session file and clear in-memory credentials (local only; transactions DB kept) |
 
 ### Sync
 | Tool | Description |

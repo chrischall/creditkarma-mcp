@@ -147,6 +147,7 @@ The server extracts the access and refresh JWTs from the `CKAT` cookie inside th
 | Tool | What it does |
 |------|-------------|
 | `ck_set_session` | Store credentials from your browser Cookie header (auto-extracts JWTs from the CKAT cookie) |
+| `ck_forget_session` | Delete the saved-session file and clear in-memory credentials (local only; synced transactions are kept) |
 | `ck_sync_transactions` | Sync transactions into the local SQLite database |
 | `ck_list_transactions` | List transactions with filters (date, account, category, merchant, amount) |
 | `ck_get_recent_transactions` | Fetch the N most recent transactions |
@@ -200,9 +201,20 @@ sync_state   (key, value)
 - Credentials are stored only in your saved-session file (`~/.creditkarma-mcp/session`, or `CK_SESSION_PATH`), Claude config / `.env`, or your browser's cookie jar (fetchproxy path)
 - The saved-session file is written at mode 0600 (owner read/write only), in a 0700 directory, by `ck_set_session` and by every token-refresh rotation
 - `ck_set_session` refuses to save a refresh token whose JWT `exp` is already in the past — prevents stale credentials from polluting the saved session
-- The fetchproxy path reads cookies directly from the user's browser via `chrome.cookies.get`, but it is **not** memory-only: every token refresh rotates the session, and the rotated `CKAT`/`CKTRKID` Cookie header is saved to the saved-session file (`~/.creditkarma-mcp/session`, or `CK_SESSION_PATH`) at mode 0600 in a 0700 directory — fetchproxy-only users included — so a restart can recover without re-reading the browser. Delete that file to remove it
+- The fetchproxy path reads cookies directly from the user's browser via `chrome.cookies.get`, but it is **not** memory-only: every token refresh rotates the session, and the rotated `CKAT`/`CKTRKID` Cookie header is saved to the saved-session file (`~/.creditkarma-mcp/session`, or `CK_SESSION_PATH`) at mode 0600 in a 0700 directory — fetchproxy-only users included — so a restart can recover without re-reading the browser. Call `ck_forget_session` (or delete that file) to remove it
 - The server never logs credentials; warnings go to stderr only (stdout is reserved for the MCP JSON-RPC stream)
 - Only `SELECT` queries are permitted via `ck_query_sql` — no writes to Credit Karma; the underlying `node:sqlite` `prepare()` also rejects multi-statement input
+
+## Uninstall / Reset
+
+The server keeps two things on disk. Neither is removed when you uninstall the extension or stop using it:
+
+| What | Default path | How to remove |
+|------|--------------|---------------|
+| Saved session — your full creditkarma.com Cookie header (working access + refresh tokens) | `~/.creditkarma-mcp/session` (`CK_SESSION_PATH`) | Call `ck_forget_session`, or delete the file |
+| Synced transaction history (accounts, merchants, amounts, descriptions) | `~/.creditkarma-mcp/transactions.db` (`CK_DB_PATH`) plus any `-wal` / `-shm` sidecars | Quit the server, then delete the files (or the whole `~/.creditkarma-mcp/` directory) |
+
+`ck_forget_session` is local only: Credit Karma is not contacted, so sign out at creditkarma.com to invalidate the tokens themselves. If `CK_COOKIES` is set in your Claude config, remove it there too, and sign out of creditkarma.com in the browser if the fetchproxy extension is installed — otherwise the next call picks the session straight back up.
 
 ## Development
 
@@ -229,7 +241,8 @@ src/
   db.ts                 SQLite schema, migrations, and upsert helpers
   transaction.graphql   Documents the transactions selection set (sent as a persisted-query hash, not this text)
   tools/
-    auth.ts             ck_set_session — refuses stale refresh tokens, saves ~/.creditkarma-mcp/session at 0600
+    auth.ts             ck_set_session — refuses stale refresh tokens, saves ~/.creditkarma-mcp/session at 0600;
+                        ck_forget_session — deletes it and clears in-memory credentials
     sync.ts             ck_sync_transactions — incremental sync with resume-on-failure
     query.ts            ck_list_transactions, ck_get_recent_transactions,
                         ck_get_spending_by_category, ck_get_spending_by_merchant,

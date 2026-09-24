@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, statSync, writeFileSync, readFileSync, chmodSync } from 'fs'
+import { mkdtempSync, rmSync, statSync, writeFileSync, readFileSync, chmodSync, existsSync, mkdirSync } from 'fs'
 import { tmpdir, homedir } from 'os'
 import { join } from 'path'
-import { sessionPath, readSavedSession, saveSession } from '../src/session.js'
+import { sessionPath, readSavedSession, saveSession, deleteSavedSession, dbPath } from '../src/session.js'
 
 describe('saved session file (fleet-audit#71)', () => {
   let dir: string
@@ -61,5 +61,50 @@ describe('saved session file (fleet-audit#71)', () => {
     const blocker = join(dir, 'blocker')
     writeFileSync(blocker, 'x')
     expect(saveSession('CKAT=x', join(blocker, 'session'))).toMatch(/could not be written.*restart/)
+  })
+
+  it('resolves the transactions DB path from CK_DB_PATH, else beside the session', () => {
+    const prev = process.env.CK_DB_PATH
+    try {
+      delete process.env.CK_DB_PATH
+      expect(dbPath()).toBe(join(homedir(), '.creditkarma-mcp', 'transactions.db'))
+      process.env.CK_DB_PATH = join(dir, 'custom.db')
+      expect(dbPath()).toBe(join(dir, 'custom.db'))
+    } finally {
+      if (prev === undefined) delete process.env.CK_DB_PATH
+      else process.env.CK_DB_PATH = prev
+    }
+  })
+
+  // fleet-audit#1158: there was no way to remove the saved Cookie header.
+  describe('deleteSavedSession', () => {
+    it('deletes an existing session file and reports that it did', () => {
+      const path = join(dir, 'session')
+      saveSession('CKAT=a%3Bb', path)
+      expect(deleteSavedSession(path)).toEqual({ deleted: true })
+      expect(existsSync(path)).toBe(false)
+      expect(readSavedSession(path)).toBeNull()
+    })
+
+    it('is a no-op on a missing file', () => {
+      expect(deleteSavedSession(join(dir, 'never-written'))).toEqual({ deleted: false })
+    })
+
+    it('deletes the default path when none is given', () => {
+      process.env.CK_SESSION_PATH = join(dir, 'default-session')
+      saveSession('CKAT=x')
+      expect(deleteSavedSession()).toEqual({ deleted: true })
+      expect(existsSync(join(dir, 'default-session'))).toBe(false)
+    })
+
+    it('warns instead of throwing when the path cannot be removed', () => {
+      // A directory at the session path cannot be unlinked as a file.
+      const path = join(dir, 'is-a-dir')
+      mkdirSync(path)
+      const result = deleteSavedSession(path)
+      expect(result.deleted).toBe(false)
+      expect(result.warning).toMatch(/could not be deleted/)
+      expect(existsSync(path)).toBe(true)
+    })
   })
 })

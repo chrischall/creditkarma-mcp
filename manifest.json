@@ -59,6 +59,10 @@
       "description": "Store a Credit Karma session cookie to enable automatic token refresh"
     },
     {
+      "name": "ck_forget_session",
+      "description": "Delete the saved Credit Karma session file and clear in-memory credentials (local only)"
+    },
+    {
       "name": "ck_sync_transactions",
       "description": "Sync Credit Karma transactions into the local SQLite database"
     },
@@ -84,7 +88,7 @@
     },
     {
       "name": "ck_query_sql",
-      "description": "Execute a raw SQL SELECT query against the transactions database"
+      "description": "Execute a raw SQL SELECT query against the transactions database (capped at max_rows, default 500)"
     }
   ],
   "compatibility": {

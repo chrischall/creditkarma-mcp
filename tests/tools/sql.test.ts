@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createTestHarness } from '@chrischall/mcp-utils/test'
-import { handleQuerySql, registerSqlTools } from '../../src/tools/sql.js'
+import { handleQuerySql, registerSqlTools, DEFAULT_MAX_ROWS, MAX_ROWS_LIMIT } from '../../src/tools/sql.js'
 import { initDb, upsertAccount, upsertCategory, upsertMerchant, upsertTransaction } from '../../src/db.js'
 import { CreditKarmaClient } from '../../src/client.js'
 import type { AppContext } from '../../src/index.js'
@@ -128,6 +128,48 @@ describe('ck_query_sql', () => {
     expect(() => upsertMerchant(ctx.db, { id: 'm2', name: 'Peets' })).not.toThrow()
   })
 
+  // fleet-audit#1157: a bare `SELECT * FROM transactions` used to return the
+  // whole synced history in one tool result.
+  describe('row cap', () => {
+    const series = (n: number) =>
+      `WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < ${n}) SELECT x FROM n`
+
+    it(`caps results at 500 rows by default and flags the truncation`, async () => {
+      const result = await handleQuerySql({ sql: series(DEFAULT_MAX_ROWS + 100) }, ctx)
+      expect(DEFAULT_MAX_ROWS).toBe(500)
+      expect(result.rows).toHaveLength(DEFAULT_MAX_ROWS)
+      expect(result.count).toBe(DEFAULT_MAX_ROWS)
+      expect(result.truncated).toBe(true)
+      expect(result.hint).toMatch(/LIMIT/)
+      expect(result.hint).toMatch(/OFFSET/)
+      expect(result.hint).toMatch(/max_rows/)
+    })
+
+    it('does not flag a result that fits exactly under the cap', async () => {
+      const result = await handleQuerySql({ sql: series(DEFAULT_MAX_ROWS) }, ctx)
+      expect(result.rows).toHaveLength(DEFAULT_MAX_ROWS)
+      expect(result.truncated).toBe(false)
+      expect(result.hint).toBeUndefined()
+    })
+
+    it('honours an explicit max_rows', async () => {
+      const result = await handleQuerySql({ sql: series(10), max_rows: 3 }, ctx)
+      expect(result.rows).toEqual([{ x: 1 }, { x: 2 }, { x: 3 }])
+      expect(result.truncated).toBe(true)
+    })
+
+    it(`clamps max_rows to 5000`, async () => {
+      const result = await handleQuerySql({ sql: series(MAX_ROWS_LIMIT + 1), max_rows: MAX_ROWS_LIMIT * 10 }, ctx)
+      expect(result.rows).toHaveLength(MAX_ROWS_LIMIT)
+      expect(result.truncated).toBe(true)
+    })
+
+    it('still restores write access after a truncated read', async () => {
+      await handleQuerySql({ sql: series(10), max_rows: 1 }, ctx)
+      expect(() => upsertMerchant(ctx.db, { id: 'm4', name: 'Philz' })).not.toThrow()
+    })
+  })
+
   it('restores write access even when the query throws', async () => {
     await expect(handleQuerySql({ sql: 'SELECT * FROM nonexistent_table' }, ctx)).rejects.toThrow()
     expect(() => upsertMerchant(ctx.db, { id: 'm3', name: 'Blue Bottle' })).not.toThrow()
@@ -153,7 +195,8 @@ describe('registerSqlTools', () => {
     expect(tool?.inputSchema).toMatchObject({
       type: 'object',
       properties: {
-        sql: { type: 'string', description: 'A SELECT SQL statement' }
+        sql: { type: 'string', description: 'A SELECT SQL statement' },
+        max_rows: { type: 'integer', minimum: 1, maximum: MAX_ROWS_LIMIT }
       },
       required: ['sql']
     })
@@ -168,5 +211,15 @@ describe('registerSqlTools', () => {
     const body = JSON.parse(result.content[0].text)
     expect(body.count).toBe(1)
     expect(body.rows[0]).toMatchObject({ id: 'tx1' })
+    expect(body.truncated).toBe(false)
+  })
+
+  it('handler passes max_rows through to the cap', async () => {
+    const { server, calls } = fakeServer()
+    registerSqlTools(server, ctx)
+    const result = await calls[0].handler({ sql: 'SELECT 1 AS a UNION ALL SELECT 2', max_rows: 1 })
+    const body = JSON.parse(result.content[0].text)
+    expect(body.rows).toEqual([{ a: 1 }])
+    expect(body.truncated).toBe(true)
   })
 })

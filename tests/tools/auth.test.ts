@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'fs'
+import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { handleSetSession, registerAuthTools } from '../../src/tools/auth.js'
+import { handleSetSession, handleForgetSession, registerAuthTools } from '../../src/tools/auth.js'
 import { readSavedSession } from '../../src/session.js'
 import { CreditKarmaClient } from '../../src/client.js'
 import { initDb } from '../../src/db.js'
@@ -121,6 +121,87 @@ describe('ck_set_session', () => {
   })
 })
 
+// fleet-audit#1158: the saved Cookie header (working CK access + refresh JWTs)
+// stayed on disk with no tool to remove it.
+describe('ck_forget_session', () => {
+  let ctx: AppContext
+  let tmpDir: string
+  let sessionFile: string
+  let savedPath: string | undefined
+  let savedEnvCookies: string | undefined
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir()
+    savedPath = process.env.CK_SESSION_PATH
+    savedEnvCookies = process.env.CK_COOKIES
+    delete process.env.CK_COOKIES
+    sessionFile = join(tmpDir, 'session')
+    process.env.CK_SESSION_PATH = sessionFile
+    ctx = { client: new CreditKarmaClient(), db: initDb(':memory:') }
+  })
+
+  afterEach(() => {
+    process.env.CK_SESSION_PATH = savedPath
+    if (savedEnvCookies === undefined) delete process.env.CK_COOKIES
+    else process.env.CK_COOKIES = savedEnvCookies
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('deletes the saved-session file and clears the in-memory credentials', async () => {
+    await handleSetSession({ cookies: 'CKAT=acc-tok%3Bref-tok' }, ctx)
+    expect(existsSync(sessionFile)).toBe(true)
+
+    const result = handleForgetSession(ctx)
+
+    expect(existsSync(sessionFile)).toBe(false)
+    expect(ctx.client.getToken()).toBeNull()
+    expect(ctx.client.getRefreshToken()).toBeNull()
+    expect(ctx.client.getCookies()).toBeNull()
+    expect(result).toMatchObject({ forgotten: true, sessionFile, hadSavedSession: true, envCookiesSet: false })
+    // Never echo the credential back.
+    expect(JSON.stringify(result)).not.toContain('acc-tok')
+    expect(JSON.stringify(result)).not.toContain('ref-tok')
+  })
+
+  it('says the transaction database is untouched and where it lives', () => {
+    const result = handleForgetSession(ctx)
+    expect(result.transactionsDb).toMatch(/transactions\.db|CK_DB_PATH/)
+    expect(result.note).toMatch(/not contacted/i)
+  })
+
+  it('is idempotent when nothing is saved', () => {
+    const result = handleForgetSession(ctx)
+    expect(result).toMatchObject({ forgotten: true, hadSavedSession: false })
+    expect(result.warning).toBeUndefined()
+  })
+
+  it('warns that CK_COOKIES still supplies a session when the host sets it', () => {
+    process.env.CK_COOKIES = 'CKAT=env-acc%3Benv-ref'
+    const result = handleForgetSession(ctx)
+    expect(result.envCookiesSet).toBe(true)
+    expect(result.nextStep).toMatch(/CK_COOKIES/)
+    expect(JSON.stringify(result)).not.toContain('env-acc')
+  })
+
+  it('surfaces a warning when the file cannot be deleted', () => {
+    mkdirSync(sessionFile)
+    const result = handleForgetSession(ctx)
+    expect(result.hadSavedSession).toBe(false)
+    expect(result.warning).toMatch(/could not be deleted/)
+  })
+
+  it('is registered as a local, destructive, idempotent tool whose handler returns JSON text', async () => {
+    const { server, calls } = fakeServer()
+    registerAuthTools(server, ctx)
+    const tool = calls.find((c) => c.name === 'ck_forget_session')!
+    expect(tool.opts.description).toMatch(/session/)
+    expect(tool.opts.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false })
+    const out = await tool.handler({})
+    expect(out.content[0].type).toBe('text')
+    expect(JSON.parse(out.content[0].text)).toMatchObject({ forgotten: true })
+  })
+})
+
 describe('registerAuthTools', () => {
   it('registers ck_set_session with a string `cookies` field', () => {
     const ctx: AppContext = {
@@ -130,7 +211,7 @@ describe('registerAuthTools', () => {
     const { server, calls } = fakeServer()
     registerAuthTools(server, ctx)
 
-    expect(calls).toHaveLength(1)
+    expect(calls.map((c) => c.name)).toEqual(['ck_set_session', 'ck_forget_session'])
     expect(calls[0].name).toBe('ck_set_session')
     expect(calls[0].opts.description).toMatch(/Credit Karma/)
     expect(calls[0].opts.inputSchema.shape).toHaveProperty('cookies')

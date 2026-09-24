@@ -1,9 +1,9 @@
 import { z } from 'zod'
-import { rawTextResult, parseCookieHeader } from '@chrischall/mcp-utils'
+import { rawTextResult, parseCookieHeader, minifiedResult, readEnvVar } from '@chrischall/mcp-utils'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import { isJwtExpired } from '../client.js'
-import { saveSession } from '../session.js'
+import { saveSession, sessionPath, deleteSavedSession, dbPath } from '../session.js'
 
 export interface SetSessionArgs {
   /** Full Cookie header string from any CK network request */
@@ -41,6 +41,48 @@ export async function handleSetSession(args: SetSessionArgs, ctx: AppContext): P
     : 'Session saved. Access token, refresh token, and cookies stored.'
 }
 
+export interface ForgetSessionResult {
+  forgotten: true
+  /** The saved-session file this call targeted. */
+  sessionFile: string
+  /** Whether a saved session file was actually deleted. */
+  hadSavedSession: boolean
+  /** Whether the host still passes CK_COOKIES (which this tool cannot unset). */
+  envCookiesSet: boolean
+  /** The local transactions database — NOT deleted by this tool. */
+  transactionsDb: string
+  note: string
+  nextStep: string
+  warning?: string
+}
+
+/**
+ * Forget the Credit Karma session on this machine (fleet-audit#1158): delete
+ * the saved Cookie header and clear the credentials held in memory. Local only
+ * — no request goes to Credit Karma, and no credential is echoed back.
+ */
+export function handleForgetSession(ctx: AppContext): ForgetSessionResult {
+  const sessionFile = sessionPath()
+  const { deleted, warning } = deleteSavedSession(sessionFile)
+  ctx.client.clearSession()
+  const envCookiesSet = Boolean(readEnvVar('CK_COOKIES'))
+  return {
+    forgotten: true,
+    sessionFile,
+    hadSavedSession: deleted,
+    envCookiesSet,
+    transactionsDb: dbPath(),
+    note:
+      'Local only — Credit Karma was not contacted, so the tokens stay valid until they expire or you sign out at ' +
+      'creditkarma.com. Synced transactions are kept; delete the transactionsDb file (and its -wal/-shm sidecars) to remove them.',
+    nextStep: envCookiesSet
+      ? 'CK_COOKIES is still set in the host config and will be used on the next call — remove it there to fully sign out.'
+      : 'The next Credit Karma call needs credentials again: while the fetchproxy extension sees a signed-in creditkarma.com ' +
+        'tab it re-reads the cookies (and saves rotated sessions again), so sign out there too to stay signed out.',
+    ...(warning ? { warning } : {}),
+  }
+}
+
 export function registerAuthTools(server: McpServer, ctx: AppContext): void {
   server.registerTool(
     'ck_set_session',
@@ -55,5 +97,19 @@ export function registerAuthTools(server: McpServer, ctx: AppContext): void {
       const result = await handleSetSession(args, ctx)
       return rawTextResult(result)
     }
+  )
+
+  server.registerTool(
+    'ck_forget_session',
+    {
+      description:
+        'Forget the Credit Karma session on this machine: delete the saved-session file (~/.creditkarma-mcp/session, or ' +
+        'CK_SESSION_PATH) that ck_set_session and token refreshes write, and clear the credentials held in memory. ' +
+        'Use when the user stops using this server or wants their stored login removed. Local only — Credit Karma is ' +
+        'not contacted, synced transactions are kept, and a CK_COOKIES value set in the host config is not changed.',
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({}),
+    },
+    async () => minifiedResult(handleForgetSession(ctx))
   )
 }

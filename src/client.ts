@@ -208,6 +208,17 @@ export class CreditKarmaClient {
   }
 
   /**
+   * Drop every credential this client holds (`ck_forget_session`), so the
+   * running server stops using the session as well as the file on disk.
+   */
+  clearSession(): void {
+    this.token = null
+    this.refreshToken = null
+    this.cookies = null
+    this.tokens = this.buildTokenManager()
+  }
+
+  /**
    * Register the one listener told the rebuilt Cookie header after each
    * successful refresh, i.e. each rotation of CK's refresh token.
    */

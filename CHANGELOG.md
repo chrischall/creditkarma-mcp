@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.3](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.2...v3.1.3) (2026-09-24)
+
+
+### Bug Fixes
+
+* **deps:** bump dotenv from 17.4.2 to 18.0.2 in the production-majors group ([#204](https://github.com/chrischall/creditkarma-mcp/issues/204)) ([80cdf71](https://github.com/chrischall/creditkarma-mcp/commit/80cdf713318015fcdfb04d19f0528c6ee86beaaf))
+* **privacy:** cap ck_query_sql rows and add ck_forget_session ([#206](https://github.com/chrischall/creditkarma-mcp/issues/206)) ([9716d75](https://github.com/chrischall/creditkarma-mcp/commit/9716d751267469353fc0cb35da4d530dd2a8e66f))
+
 ## [3.1.2](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.1...v3.1.2) (2026-09-23)
 
 

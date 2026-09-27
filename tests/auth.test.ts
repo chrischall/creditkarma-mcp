@@ -470,6 +470,25 @@ describe('resolveAuth', () => {
       expect(msg).not.toMatch(/no credentials readable/)
     })
 
+    it('names "unknown browser" when the bridge does not report its platform', async () => {
+      // `platform` is optional on the error — older bridges omit it. The copy
+      // must still read cleanly rather than printing "(undefined)".
+      const { FetchproxyCapabilityUnavailableError } = await import('@fetchproxy/server')
+      const unavailable = new FetchproxyCapabilityUnavailableError(
+        'capability "read_cookies" is not available in this browser',
+        { capability: 'read_cookies' },
+      )
+      expect(unavailable.platform).toBeUndefined()
+      bootstrapMock.mockRejectedValue(unavailable)
+
+      const err = await resolveAuth().then(() => null, (e: unknown) => e)
+
+      expect(isCkAuthError(err)).toBe(false)
+      const msg = (err as Error).message
+      expect(msg).toMatch(/ContextMint Bridge in this browser \(unknown browser\) can't read creditkarma\.com cookies/)
+      expect(msg).not.toMatch(/undefined/)
+    })
+
     it('treats a hello rejected for other reasons as a generic fallback failure', async () => {
       const { FetchproxyHelloRejectedError } = await import('@fetchproxy/server')
       const rejected = new FetchproxyHelloRejectedError({ mcpId: 'creditkarma-mcp', reason: 'user-denied' })

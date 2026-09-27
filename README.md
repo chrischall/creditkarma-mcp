@@ -25,7 +25,7 @@ Ask Claude things like:
 - [Claude Desktop](https://claude.ai/download) or [Claude Code](https://claude.ai/code)
 - [Node.js](https://nodejs.org) 18 or later
 - A Credit Karma account
-- For the no-env-var path: the [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases) browser extension
+- For the no-env-var path: the [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases) browser extension (the renamed fetchproxy extension, same maintainer — see Option A below for how to verify it)
 
 ## Acknowledgement of Terms
 
@@ -118,7 +118,13 @@ Set `CK_DISABLE_FETCHPROXY=1` to opt out of the fallback (turns missing credenti
 
 #### Option A — ContextMint Bridge extension (recommended)
 
-1. Install ContextMint Bridge from its [releases page](https://github.com/nullnet-app/contextmint-bridge/releases). Chrome: download the chrome zip, unzip it, and load it unpacked at `chrome://extensions` (Developer mode → **Load unpacked**). Safari: it ships inside the ContextMint app.
+1. Install ContextMint Bridge from its [releases page](https://github.com/nullnet-app/contextmint-bridge/releases). Chrome: download the chrome zip, unzip it, and load it unpacked at `chrome://extensions` (Developer mode → **Load unpacked**). Safari: it ships inside the ContextMint app, which has no public download link yet — use Chrome, or Option B, for now.
+
+   ContextMint Bridge is the [fetchproxy](https://github.com/chrischall/fetchproxy) browser extension under its new name, from the same maintainer — fetchproxy's own README ([Extension](https://github.com/chrischall/fetchproxy#extension)) points to it. Its source is public at [nullnet-app/contextmint-bridge](https://github.com/nullnet-app/contextmint-bridge): build it yourself (`npm run build`), or check a release zip against the `.sha256` file published beside it before loading it:
+
+   ```sh
+   shasum -a 256 -c contextmint-bridge-chrome-<version>.zip.sha256
+   ```
 2. Sign into [creditkarma.com](https://www.creditkarma.com) in that browser.
 3. Leave `CK_COOKIES` **unset** in your Claude config.
 

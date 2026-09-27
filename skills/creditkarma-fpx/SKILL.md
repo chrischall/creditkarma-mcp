@@ -36,7 +36,9 @@ fpx pair -p creditkarma                                          # prints a pair
 ```
 
 Requirements: the **ContextMint Bridge** browser extension installed
-([releases](https://github.com/nullnet-app/contextmint-bridge/releases)), with an open
+([releases](https://github.com/nullnet-app/contextmint-bridge/releases); it is the
+fetchproxy extension renamed, same maintainer — public source, verify a release
+zip with `shasum -a 256 -c <zip>.sha256`), with an open
 `www.creditkarma.com` tab you're signed into, and its Chrome **Site access**
 allowing `creditkarma.com`. `CKAT`/`CKTRKID` are `HttpOnly` (invisible to page
 JS) but `fpx cookies` reads them via the extension's `chrome.cookies.get`,

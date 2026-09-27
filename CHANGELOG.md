@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.1.4](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.3...v3.1.4) (2026-09-27)
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group with 4 updates ([#208](https://github.com/chrischall/creditkarma-mcp/issues/208)) ([3aad6e7](https://github.com/chrischall/creditkarma-mcp/commit/3aad6e7a25d1117515d24f437ff73f3cad0e2f25))
+* **deps:** move to [@fetchproxy](https://github.com/fetchproxy) 3.4 for ContextMint Bridge errors, capability subsets and managed pins ([#209](https://github.com/chrischall/creditkarma-mcp/issues/209)) ([8ebda07](https://github.com/chrischall/creditkarma-mcp/commit/8ebda076e875d2c961c452e3c2fc6bb00a631cec))
+* **deps:** move to @chrischall/mcp-utils 2.8 and [@fetchproxy](https://github.com/fetchproxy) 3.4.1 for clearer browser-bridge errors ([#212](https://github.com/chrischall/creditkarma-mcp/issues/212)) ([8f2c703](https://github.com/chrischall/creditkarma-mcp/commit/8f2c70334b036189e935e4a7ddd5a3e3eea6a514))
+
 ## [3.1.3](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.2...v3.1.3) (2026-09-24)
 
 

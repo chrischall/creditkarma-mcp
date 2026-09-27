@@ -29,8 +29,8 @@
 //
 //   3. fetchproxy fallback (new)
 //      When no usable Cookie header is set, lift the user's session out of their
-//      signed-in creditkarma.com browser tab via the fetchproxy 0.3.0
-//      extension. `@fetchproxy/bootstrap` spins up a one-shot WebSocket
+//      signed-in creditkarma.com browser tab via the ContextMint Bridge
+//      browser extension (@fetchproxy). `@fetchproxy/bootstrap` spins up a one-shot WebSocket
 //      bridge, asks the extension for the `CKAT` and `CKTRKID` cookies via
 //      `chrome.cookies.get`, then closes the bridge. The synthesized
 //      Cookie header has the same shape that ck_set_session produces, so
@@ -67,6 +67,7 @@
 
 import { bootstrap } from '@fetchproxy/bootstrap'
 import { classifyBridgeError, FetchproxyBridgeDownError } from '@chrischall/mcp-utils/fetchproxy'
+import { FetchproxyCapabilityUnavailableError, FetchproxyHelloRejectedError } from '@fetchproxy/server'
 import { readEnvVar, parseBoolEnv, parseCookieHeader, decodeJwtClaim } from '@chrischall/mcp-utils'
 import pkg from '../package.json' with { type: 'json' }
 import { CreditKarmaClient, isJwtExpired } from './client.js'
@@ -139,7 +140,27 @@ export async function resolveAuth(opts: ResolveOptions = {}): Promise<ResolvedAu
         // Tagging it `no_credentials` would send them to re-sign-in when the
         // fix is to wake the extension.
         throw new Error(
-          `CK auth: fetchproxy bridge is down (extension service worker unreachable after retry). ${downErr.hint}`,
+          `CK auth: ContextMint Bridge is down (extension service worker unreachable after retry). ${downErr.hint}`,
+        )
+      }
+      // @fetchproxy 3.3+: the bridge is up and the MCP declared cookie reads,
+      // but THIS browser cannot serve them. Not the user's session and not
+      // this MCP's code — the fix is another browser or a pasted Cookie
+      // header. Deliberately not a CkAuthError, for the same reason as above.
+      // The hello-level refusal (#418: EVERY declared capability unavailable)
+      // is the same browser limit, so it gets the same copy when it carries a
+      // hint; other hello rejections fall through to the generic wrap below.
+      // The generic hint says "the rest of this MCP still works here" — for CK
+      // that is only the already-synced local mirror, so spell that out.
+      if (
+        e instanceof FetchproxyCapabilityUnavailableError ||
+        (e instanceof FetchproxyHelloRejectedError && e.hint)
+      ) {
+        throw new Error(
+          `CK auth: ContextMint Bridge in this browser (${e.platform ?? 'unknown browser'}) can't read ` +
+            `creditkarma.com cookies. ${e.hint} For Credit Karma that means only already-synced local ` +
+            `data can be queried; syncing and live calls need the cookies. Use another browser, or ` +
+            `paste a Cookie header via ck_set_session / CK_COOKIES.`,
         )
       }
       const msg = e instanceof Error ? e.message : String(e)
@@ -190,7 +211,7 @@ export async function resolveAuth(opts: ResolveOptions = {}): Promise<ResolvedAu
     'no_credentials',
     'CK auth: no credentials readable — set CK_COOKIES, ' +
       'or call the ck_set_session MCP tool with a Cookie header, ' +
-      'or install the fetchproxy extension and sign into creditkarma.com ' +
+      'or install the ContextMint Bridge extension and sign into creditkarma.com ' +
       '(unset CK_DISABLE_FETCHPROXY if it is set).',
   )
 }
@@ -208,7 +229,7 @@ async function readFromFetchproxy(): Promise<ResolvedAuth> {
       // CKAT contains the access + refresh JWTs joined by `%3B`. CKTRKID
       // is sent as the `ck-cookie-id` header on refresh requests; without
       // it the refresh endpoint 403s. Both are HttpOnly — invisible to
-      // page JS — but fetchproxy 0.3.0's `read_cookies` uses
+      // page JS — but ContextMint Bridge's `read_cookies` uses
       // `chrome.cookies.get` which sees HttpOnly cookies.
       cookies: ['CKAT', 'CKTRKID'],
       localStorage: [],
@@ -223,14 +244,14 @@ async function readFromFetchproxy(): Promise<ResolvedAuth> {
     throw new CkAuthError(
       'no_credentials',
       'CKAT cookie missing on creditkarma.com. ' +
-        'Sign into creditkarma.com in your browser (with the fetchproxy extension installed) and retry.',
+        'Sign into creditkarma.com in your browser (with the ContextMint Bridge extension installed) and retry.',
     )
   }
   if (!cktrkid) {
     throw new CkAuthError(
       'no_credentials',
       'CKTRKID cookie missing on creditkarma.com. ' +
-        'Sign into creditkarma.com in your browser (with the fetchproxy extension installed) and retry.',
+        'Sign into creditkarma.com in your browser (with the ContextMint Bridge extension installed) and retry.',
     )
   }
 
@@ -325,7 +346,7 @@ export function splitCkatCookie(cookies: string): {
  *
  * Used by tool handlers on the first request that needs auth but finds no
  * credentials on the client — i.e. the user didn't set CK_COOKIES, didn't
- * call ck_set_session, and the fetchproxy extension is the last hope.
+ * call ck_set_session, and the ContextMint Bridge extension is the last hope.
  *
  * If `resolveAuth()` lands on the env-var path (path 1) the cookies are
  * applied with no network round-trip. If it lands on fetchproxy (path 3)
@@ -378,7 +399,7 @@ export function applyCookiesToClient(client: CreditKarmaClient, cookies: string)
     throw new CkAuthError(
       'session_stale',
       'CK auth: session stale — the refresh token in your creditkarma.com cookies has expired ' +
-        '(they last ~8 hours). Sign back into creditkarma.com so the fetchproxy extension can ' +
+        '(they last ~8 hours). Sign back into creditkarma.com so the ContextMint Bridge extension can ' +
         're-read fresh cookies, or paste a fresh Cookie header via ck_set_session.',
     )
   }

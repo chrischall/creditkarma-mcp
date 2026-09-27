@@ -32,10 +32,11 @@ remote endpoint to reproduce for those.
 npm install -g @fetchproxy/cli                                  # provides `fpx`
 fpx profile add creditkarma --domain creditkarma.com
 fpx profile declare creditkarma --cookie CKAT --cookie CKTRKID   # widen scope to these cookies
-fpx pair -p creditkarma                                          # prints a pair code → approve in Transporter
+fpx pair -p creditkarma                                          # prints a pair code → approve in ContextMint Bridge
 ```
 
-Requirements: the **Transporter** browser extension installed, with an open
+Requirements: the **ContextMint Bridge** browser extension installed
+([releases](https://github.com/nullnet-app/contextmint-bridge/releases)), with an open
 `www.creditkarma.com` tab you're signed into, and its Chrome **Site access**
 allowing `creditkarma.com`. `CKAT`/`CKTRKID` are `HttpOnly` (invisible to page
 JS) but `fpx cookies` reads them via the extension's `chrome.cookies.get`,

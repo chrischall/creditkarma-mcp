@@ -419,8 +419,64 @@ describe('resolveAuth', () => {
       })
       bootstrapMock.mockRejectedValue(downErr)
 
-      await expect(resolveAuth()).rejects.toThrow(/fetchproxy bridge is down/)
+      await expect(resolveAuth()).rejects.toThrow(/ContextMint Bridge is down/)
       await expect(resolveAuth()).rejects.toThrow(downErr.hint)
+    })
+
+    it('reports a browser that cannot read cookies as a browser limit, not a missing session', async () => {
+      // @fetchproxy 3.3+: the bridge grants what THIS browser can serve and
+      // refuses the rest with FetchproxyCapabilityUnavailableError. That is
+      // neither the MCP's fault nor the user's session — it needs another
+      // browser or a pasted Cookie header.
+      const { FetchproxyCapabilityUnavailableError } = await import('@fetchproxy/server')
+      const unavailable = new FetchproxyCapabilityUnavailableError(
+        'capability "read_cookies" is not available in this browser (safari)',
+        { capability: 'read_cookies', platform: 'safari' },
+      )
+      bootstrapMock.mockRejectedValue(unavailable)
+
+      const err = await resolveAuth().then(() => null, (e: unknown) => e)
+
+      expect(isCkAuthError(err)).toBe(false)
+      const msg = (err as Error).message
+      expect(msg).toMatch(/ContextMint Bridge in this browser \(safari\) can't read creditkarma\.com cookies/)
+      expect(msg).toMatch(/ck_set_session/)
+      expect(msg).toContain(unavailable.hint)
+      expect(msg).not.toMatch(/no credentials readable/)
+      // The generic hint says "the rest of this MCP still works" — for CK that
+      // is only the already-synced local data, so say so.
+      expect(msg).toMatch(/only already-synced local data/i)
+    })
+
+    it('reports a hello rejected for unsupported capabilities as a browser limit too', async () => {
+      // #418: when EVERY declared capability is unavailable the bridge refuses
+      // the hello outright with FetchproxyHelloRejectedError + a hint.
+      const { FetchproxyHelloRejectedError } = await import('@fetchproxy/server')
+      const rejected = new FetchproxyHelloRejectedError({
+        mcpId: 'creditkarma-mcp',
+        reason: 'unsupported-capability: fetch, read_cookies (not available in this browser)',
+        platform: 'safari',
+      })
+      expect(rejected.hint).toBeTruthy()
+      bootstrapMock.mockRejectedValue(rejected)
+
+      const err = await resolveAuth().then(() => null, (e: unknown) => e)
+
+      expect(isCkAuthError(err)).toBe(false)
+      const msg = (err as Error).message
+      expect(msg).toMatch(/ContextMint Bridge in this browser \(safari\) can't read creditkarma\.com cookies/)
+      expect(msg).toContain(rejected.hint as string)
+      expect(msg).toMatch(/ck_set_session/)
+      expect(msg).not.toMatch(/no credentials readable/)
+    })
+
+    it('treats a hello rejected for other reasons as a generic fallback failure', async () => {
+      const { FetchproxyHelloRejectedError } = await import('@fetchproxy/server')
+      const rejected = new FetchproxyHelloRejectedError({ mcpId: 'creditkarma-mcp', reason: 'user-denied' })
+      expect(rejected.hint).toBeNull()
+      bootstrapMock.mockRejectedValue(rejected)
+
+      await expect(resolveAuth()).rejects.toThrow(/no credentials readable/)
     })
   })
 
@@ -485,8 +541,8 @@ describe('resolveAuth', () => {
       await expect(resolveAuth()).rejects.toThrow(/CK_COOKIES/)
       // Mentions ck_set_session path
       await expect(resolveAuth()).rejects.toThrow(/ck_set_session/)
-      // Mentions fetchproxy extension path
-      await expect(resolveAuth()).rejects.toThrow(/fetchproxy/)
+      // Mentions the ContextMint Bridge (browser) path
+      await expect(resolveAuth()).rejects.toThrow(/ContextMint Bridge/)
     })
   })
 })
@@ -694,6 +750,6 @@ describe('auth failures are distinguishable by reason', () => {
     const err = await resolveAuth().then(() => null, (e: unknown) => e)
 
     expect(isCkAuthError(err, 'no_credentials')).toBe(false)
-    expect((err as Error).message).toMatch(/bridge is down/)
+    expect((err as Error).message).toMatch(/ContextMint Bridge is down/)
   })
 })

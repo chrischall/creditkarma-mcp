@@ -60,7 +60,7 @@ Or use a `.env` file in the project directory with `CK_COOKIES=<value>`.
 
 Three onboarding paths, in priority order:
 
-**1. fetchproxy extension (easiest — no env vars):** Install the [fetchproxy 0.3.0 extension](https://github.com/chrischall/fetchproxy), sign into creditkarma.com once, and leave `CK_COOKIES` **unset**. The MCP reads HttpOnly `CKAT` + `CKTRKID` cookies on the first tool call via `chrome.cookies.get`, then operates direct-to-API from Node.
+**1. ContextMint Bridge extension (easiest — no env vars):** Install [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases) (Chrome: load the chrome zip unpacked; Safari: ships inside the ContextMint app), sign into creditkarma.com once, and leave `CK_COOKIES` **unset**. The MCP reads HttpOnly `CKAT` + `CKTRKID` cookies on the first tool call via `chrome.cookies.get`, then operates direct-to-API from Node.
 
 **2. ck_set_session MCP tool:** From within Claude, call `ck_set_session` with a Cookie header you copied from DevTools (see below). The tool saves it to `~/.creditkarma-mcp/session` (0600), which the server reads back on every start.
 
@@ -106,7 +106,7 @@ The MCP handles auth automatically once any of the three paths is configured.
 ## Workflows
 
 **First-time setup:**
-1. Easiest: install the [fetchproxy extension](https://github.com/chrischall/fetchproxy), sign into creditkarma.com, leave `CK_COOKIES` unset.
+1. Easiest: install [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases), sign into creditkarma.com, leave `CK_COOKIES` unset.
 2. Or: copy the Cookie header from DevTools and either set `CK_COOKIES` in your config or call `ck_set_session(cookies)` from within Claude.
 3. `ck_sync_transactions` → initial full sync
 

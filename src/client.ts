@@ -392,7 +392,7 @@ export class CreditKarmaClient {
       const contentType = res.headers.get('content-type') ?? ''
       const looksHtml = !contentType.includes('json') && /^\s*<(!doctype|html)/i.test(body)
       const detail = looksHtml
-        ? '(non-JSON error page — refresh token likely expired or session invalid; sign back into creditkarma.com so the fetchproxy extension can re-read fresh cookies, or paste a fresh Cookie header via ck_set_session)'
+        ? '(non-JSON error page — refresh token likely expired or session invalid; sign back into creditkarma.com so the ContextMint Bridge extension can re-read fresh cookies, or paste a fresh Cookie header via ck_set_session)'
         // Redact + cap the upstream body (same treatment as the GraphQL path)
         // so tokens echoed back by CK never reach the tool surface.
         : (truncateErrorMessage(body, 200).trim() || '(empty body)')
@@ -464,7 +464,7 @@ export function isJwtExpired(token: string): boolean {
  */
 export function warnIfRefreshTokenExpired(refreshToken: string | undefined | null): void {
   if (refreshToken && isJwtExpired(refreshToken)) {
-    console.error('[creditkarma-mcp] Warning: refresh token in CK_COOKIES has expired. Sign back into creditkarma.com (with the fetchproxy extension installed) or call ck_set_session with a fresh Cookie header.')
+    console.error('[creditkarma-mcp] Warning: refresh token in CK_COOKIES has expired. Sign back into creditkarma.com (with the ContextMint Bridge extension installed) or call ck_set_session with a fresh Cookie header.')
   }
 }
 

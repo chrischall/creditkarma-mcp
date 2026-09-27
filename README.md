@@ -25,13 +25,13 @@ Ask Claude things like:
 - [Claude Desktop](https://claude.ai/download) or [Claude Code](https://claude.ai/code)
 - [Node.js](https://nodejs.org) 18 or later
 - A Credit Karma account
-- For the no-env-var path: the [fetchproxy 0.3.0 Chrome / Safari extension](https://github.com/chrischall/fetchproxy)
+- For the no-env-var path: the [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases) browser extension (the renamed fetchproxy extension, same maintainer — see Option A below for how to verify it)
 
 ## Acknowledgement of Terms
 
 By using this MCP server, you acknowledge and agree to the following:
 
-**1. This server accesses your own Credit Karma account.** Every request is dispatched through your own signed-in browser tab via the fetchproxy extension. **You** are the one logged in. It does not — and cannot — access anyone else's account.
+**1. This server accesses your own Credit Karma account.** Every request is dispatched through your own signed-in browser tab via the ContextMint Bridge extension. **You** are the one logged in. It does not — and cannot — access anyone else's account.
 
 **2. [Credit Karma's Terms](https://www.creditkarma.com/about/terms) govern your use of this server**, just as they govern your direct use of creditkarma.com. The clauses most relevant here:
 
@@ -110,19 +110,25 @@ Credit Karma uses short-lived JWTs. This server handles automatic token refresh 
 
 1. **`CK_COOKIES` env var (legacy).** Set the full Cookie header in your Claude Desktop config or `.env`. This is the path shown in the config above.
 2. **Saved session from `ck_set_session`.** The tool saves the Cookie header to `~/.creditkarma-mcp/session` (mode 0600; override the path with `CK_SESSION_PATH`), which the server reads back directly on every start — including from the `.mcpb` bundle. Paths 1 and 2 are both local: whichever holds the fresher refresh token wins.
-3. **fetchproxy fallback (no env vars needed — easiest onboarding).** Used when neither is configured, **or** when the local session has expired or Credit Karma has rejected its refresh token: the server reads `CKAT` + `CKTRKID` cookies from your already-signed-in `creditkarma.com` tab via the [fetchproxy](https://github.com/chrischall/fetchproxy) browser extension. After that read, all CK API calls go directly from Node — the extension is **not** in the request hot path. Install the fetchproxy extension (Chrome Web Store / Safari `.dmg`), sign into [creditkarma.com](https://www.creditkarma.com), and the MCP just works.
+3. **Browser fallback via ContextMint Bridge (no env vars needed — easiest onboarding).** Used when neither is configured, **or** when the local session has expired or Credit Karma has rejected its refresh token: the server reads `CKAT` + `CKTRKID` cookies from your already-signed-in `creditkarma.com` tab via the [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases) browser extension. After that read, all CK API calls go directly from Node — the extension is **not** in the request hot path. Install ContextMint Bridge (see Option A below), sign into [creditkarma.com](https://www.creditkarma.com), and the MCP just works.
 
 Set `CK_DISABLE_FETCHPROXY=1` to opt out of the fallback (turns missing credentials into a hard error — useful in headless CI).
 
 ### Getting your credentials (env-var path)
 
-#### Option A — fetchproxy extension (recommended)
+#### Option A — ContextMint Bridge extension (recommended)
 
-1. Install the [fetchproxy 0.3.0 extension](https://github.com/chrischall/fetchproxy) (Chrome Web Store or Safari `.dmg`).
+1. Install ContextMint Bridge from its [releases page](https://github.com/nullnet-app/contextmint-bridge/releases). Chrome: download the chrome zip, unzip it, and load it unpacked at `chrome://extensions` (Developer mode → **Load unpacked**). Safari: it ships inside the ContextMint app, which has no public download link yet — use Chrome, or Option B, for now.
+
+   ContextMint Bridge is the [fetchproxy](https://github.com/chrischall/fetchproxy) browser extension under its new name, from the same maintainer — fetchproxy's own README ([Extension](https://github.com/chrischall/fetchproxy#extension)) points to it. Its source is public at [nullnet-app/contextmint-bridge](https://github.com/nullnet-app/contextmint-bridge): build it yourself (`npm run build`), or check a release zip against the `.sha256` file published beside it before loading it:
+
+   ```sh
+   shasum -a 256 -c contextmint-bridge-chrome-<version>.zip.sha256
+   ```
 2. Sign into [creditkarma.com](https://www.creditkarma.com) in that browser.
 3. Leave `CK_COOKIES` **unset** in your Claude config.
 
-The MCP reads the HttpOnly `CKAT` + `CKTRKID` cookies via `chrome.cookies.get` on the first tool call, then operates direct-to-API from Node. To re-auth (e.g. after Credit Karma signs you out), just sign back in to creditkarma.com.
+The MCP reads the HttpOnly `CKAT` + `CKTRKID` cookies via `chrome.cookies.get` on the first tool call, then operates direct-to-API from Node. To re-auth (e.g. after Credit Karma signs you out), just sign back in to creditkarma.com. If the bridge in your browser can't read cookies, the MCP says so — use Chrome, or Option B.
 
 #### Option B — manual (DevTools)
 
@@ -184,11 +190,11 @@ sync_state   (key, value)
 
 ## Troubleshooting
 
-**"CK auth: set CK_COOKIES, or call the ck_set_session MCP tool, or install the fetchproxy extension…"** — neither auth path is configured. Either fill in `CK_COOKIES` in your Claude config, or install the [fetchproxy extension](https://github.com/chrischall/fetchproxy) and sign into `creditkarma.com` in your browser.
+**"CK auth: set CK_COOKIES, or call the ck_set_session MCP tool, or install the ContextMint Bridge extension…"** — neither auth path is configured. Either fill in `CK_COOKIES` in your Claude config, or install [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases) and sign into `creditkarma.com` in your browser.
 
-**"TOKEN_EXPIRED"** — your refresh token has expired. Sign back into creditkarma.com (fetchproxy path) or grab a fresh Cookie header from DevTools and update `CK_COOKIES` / call `ck_set_session`.
+**"TOKEN_EXPIRED"** — your refresh token has expired. Sign back into creditkarma.com (ContextMint Bridge path) or grab a fresh Cookie header from DevTools and update `CK_COOKIES` / call `ck_set_session`.
 
-**"fetchproxy fallback failed"** — the env-var path wasn't configured and the extension couldn't be reached. Confirm the fetchproxy extension is installed, signed into Credit Karma, and that it's running (open the extension popup). To disable the fallback, set `CK_DISABLE_FETCHPROXY=1`.
+**"fetchproxy fallback failed"** — the env-var path wasn't configured and the extension couldn't be reached. Confirm ContextMint Bridge is installed, you're signed into Credit Karma, and that it's running (open the extension popup). To disable the fallback, set `CK_DISABLE_FETCHPROXY=1`.
 
 **Sync returns 0 transactions** — check that your auth is fresh. The refresh token inside the CKAT cookie expires after ~8 hours.
 
@@ -198,7 +204,7 @@ sync_state   (key, value)
 
 ## Security
 
-- Credentials are stored only in your saved-session file (`~/.creditkarma-mcp/session`, or `CK_SESSION_PATH`), Claude config / `.env`, or your browser's cookie jar (fetchproxy path)
+- Credentials are stored only in your saved-session file (`~/.creditkarma-mcp/session`, or `CK_SESSION_PATH`), Claude config / `.env`, or your browser's cookie jar (ContextMint Bridge path)
 - The saved-session file is written at mode 0600 (owner read/write only), in a 0700 directory, by `ck_set_session` and by every token-refresh rotation
 - `ck_set_session` refuses to save a refresh token whose JWT `exp` is already in the past — prevents stale credentials from polluting the saved session
 - The fetchproxy path reads cookies directly from the user's browser via `chrome.cookies.get`, but it is **not** memory-only: every token refresh rotates the session, and the rotated `CKAT`/`CKTRKID` Cookie header is saved to the saved-session file (`~/.creditkarma-mcp/session`, or `CK_SESSION_PATH`) at mode 0600 in a 0700 directory — fetchproxy-only users included — so a restart can recover without re-reading the browser. Call `ck_forget_session` (or delete that file) to remove it
@@ -214,7 +220,7 @@ The server keeps two things on disk. Neither is removed when you uninstall the e
 | Saved session — your full creditkarma.com Cookie header (working access + refresh tokens) | `~/.creditkarma-mcp/session` (`CK_SESSION_PATH`) | Call `ck_forget_session`, or delete the file |
 | Synced transaction history (accounts, merchants, amounts, descriptions) | `~/.creditkarma-mcp/transactions.db` (`CK_DB_PATH`) plus any `-wal` / `-shm` sidecars | Quit the server, then delete the files (or the whole `~/.creditkarma-mcp/` directory) |
 
-`ck_forget_session` is local only: Credit Karma is not contacted, so sign out at creditkarma.com to invalidate the tokens themselves. If `CK_COOKIES` is set in your Claude config, remove it there too, and sign out of creditkarma.com in the browser if the fetchproxy extension is installed — otherwise the next call picks the session straight back up.
+`ck_forget_session` is local only: Credit Karma is not contacted, so sign out at creditkarma.com to invalidate the tokens themselves. If `CK_COOKIES` is set in your Claude config, remove it there too, and sign out of creditkarma.com in the browser if ContextMint Bridge is installed — otherwise the next call picks the session straight back up.
 
 ## Development
 

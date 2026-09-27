@@ -50,7 +50,7 @@ Three paths in priority order:
 
 1. **`CK_COOKIES` env var** — full Cookie header. Caller parses the embedded `CKAT=<accessJWT>%3B<refreshJWT>` to extract both JWTs. Unchanged from pre-fetchproxy behavior.
 2. **Saved session via `ck_set_session`** — `src/session.ts` writes the Cookie header to `~/.creditkarma-mcp/session` (0600, override with `CK_SESSION_PATH`) and `resolveLocalAuth()` reads it back with plain `fs`. It used to be a `CK_COOKIES` line in `<install>/.env`, which the shipped `.mcpb` never read back: dotenv is `--external` in the bundle and `node_modules/` is `.mcpbignore`d, so `loadDotenvSafely` silently no-ops (fleet-audit#71). Paths 1 and 2 are both local candidates — the one with the fresher refresh JWT wins (saved file on a tie). Tests isolate `CK_SESSION_PATH` via `tests/setup.ts`. `ck_forget_session` deletes the file (`deleteSavedSession`) and calls `client.clearSession()`; it cannot unset a host-supplied `CK_COOKIES` and says so (fleet-audit#1158).
-3. **fetchproxy fallback** — `@fetchproxy/bootstrap` (0.3.0+) spins up a one-shot WebSocket bridge to the fetchproxy extension and reads the HttpOnly `CKAT` + `CKTRKID` cookies on creditkarma.com via `chrome.cookies.get`. Returns once. Subsequent CK API calls (GraphQL + `/member/oauth2/refresh`) go direct from Node — fetchproxy is NOT in the hot path.
+3. **fetchproxy fallback** — `@fetchproxy/bootstrap` (3.4+) spins up a one-shot WebSocket bridge to the ContextMint Bridge extension (the fetchproxy extension renamed, same maintainer; public source at https://github.com/nullnet-app/contextmint-bridge, releases ship a `.sha256` beside each zip) and reads the HttpOnly `CKAT` + `CKTRKID` cookies on creditkarma.com via `chrome.cookies.get`. Returns once. Subsequent CK API calls (GraphQL + `/member/oauth2/refresh`) go direct from Node — fetchproxy is NOT in the hot path.
 
 `CK_DISABLE_FETCHPROXY=1` opts out of path 3 (turns missing creds into a hard error — useful in headless CI).
 
@@ -59,7 +59,7 @@ Three paths in priority order:
 ## Environment
 
 ```
-CK_COOKIES=<value>          # Optional. Full Cookie header from a signed-in creditkarma.com request. The runtime parser also accepts a bare CKAT value or `CKAT=<value>` for legacy callers. Capture via `ck_set_session` or just install the fetchproxy extension and skip this.
+CK_COOKIES=<value>          # Optional. Full Cookie header from a signed-in creditkarma.com request. The runtime parser also accepts a bare CKAT value or `CKAT=<value>` for legacy callers. Capture via `ck_set_session` or just install the ContextMint Bridge extension and skip this.
 CK_DISABLE_FETCHPROXY=1|true # Optional. Skip the fetchproxy browser-extension fallback (missing creds become a hard error — useful in headless CI).
 CK_DB_PATH=<path>           # Path to SQLite database. Default: ~/.creditkarma-mcp/transactions.db
 CK_SESSION_PATH=<path>      # Optional. Saved-session file (ck_set_session). Default: ~/.creditkarma-mcp/session

@@ -26,7 +26,7 @@ export async function handleSetSession(args: SetSessionArgs, ctx: AppContext): P
   // Refuse if the refresh JWT is already expired — saving stale credentials
   // pollutes the saved session and produces confusing HTTP 400s from the refresh endpoint.
   if (refreshToken && isJwtExpired(refreshToken)) {
-    return 'Session not saved: refresh token has already expired. Sign back into creditkarma.com — with the fetchproxy extension installed the MCP will read fresh cookies automatically, or copy a fresh Cookie header from DevTools.'
+    return 'Session not saved: refresh token has already expired. Sign back into creditkarma.com — with the ContextMint Bridge extension installed the MCP will read fresh cookies automatically, or copy a fresh Cookie header from DevTools.'
   }
 
   ctx.client.setToken(accessToken)
@@ -77,7 +77,7 @@ export function handleForgetSession(ctx: AppContext): ForgetSessionResult {
       'creditkarma.com. Synced transactions are kept; delete the transactionsDb file (and its -wal/-shm sidecars) to remove them.',
     nextStep: envCookiesSet
       ? 'CK_COOKIES is still set in the host config and will be used on the next call — remove it there to fully sign out.'
-      : 'The next Credit Karma call needs credentials again: while the fetchproxy extension sees a signed-in creditkarma.com ' +
+      : 'The next Credit Karma call needs credentials again: while the ContextMint Bridge extension sees a signed-in creditkarma.com ' +
         'tab it re-reads the cookies (and saves rotated sessions again), so sign out there too to stay signed out.',
     ...(warning ? { warning } : {}),
   }
@@ -87,7 +87,7 @@ export function registerAuthTools(server: McpServer, ctx: AppContext): void {
   server.registerTool(
     'ck_set_session',
     {
-      description: 'Store a Credit Karma session to enable automatic token refresh. Pass the full Cookie header from a signed-in creditkarma.com request (Chrome DevTools \u2192 Network \u2192 any creditkarma.com request \u2192 Request Headers \u2192 right-click the `cookie` header \u2192 Copy value). For most users the easier onboarding path is to install the fetchproxy extension and sign into creditkarma.com \u2014 the MCP reads the cookies automatically.',
+      description: 'Store a Credit Karma session to enable automatic token refresh. Pass the full Cookie header from a signed-in creditkarma.com request (Chrome DevTools \u2192 Network \u2192 any creditkarma.com request \u2192 Request Headers \u2192 right-click the `cookie` header \u2192 Copy value). For most users the easier onboarding path is to install the ContextMint Bridge extension and sign into creditkarma.com \u2014 the MCP reads the cookies automatically.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         cookies: z.string().describe('Full Cookie header from a signed-in creditkarma.com request (contains CKAT, CKTRKID, etc.)'),

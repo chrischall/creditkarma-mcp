@@ -111,8 +111,8 @@ export function registerHealthcheckTools(
     },
     hints: {
       no_credential:
-        'No Credit Karma credential resolved. Set CK_COOKIES, or install the fetchproxy ' +
-        'extension and sign in to creditkarma.com in a tab. Note that ck_query_sql and the ' +
+        'No Credit Karma credential resolved. Set CK_COOKIES, or install the ContextMint ' +
+        'Bridge browser extension and sign in to creditkarma.com in a tab. Note that ck_query_sql and the ' +
         'summary tools keep answering from the LOCAL mirror while this is broken, so stale ' +
         'answers are not evidence that auth works.',
       ok:

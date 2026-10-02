@@ -1,4 +1,10 @@
-import { truncateErrorMessage, decodeJwtClaim, parseCookieHeader } from '@chrischall/mcp-utils'
+import {
+  truncateErrorMessage,
+  decodeJwtClaim,
+  parseCookieHeader,
+  EdgeBlockedError,
+  detectEdgeBlock,
+} from '@chrischall/mcp-utils'
 import { TokenManager } from '@chrischall/mcp-utils/session'
 import { CkAuthError } from './authError.js'
 import * as queryHash from './queryHash.js'
@@ -332,6 +338,10 @@ export class CreditKarmaClient {
 
     if (isNoQueryFound(response.status, body)) return NO_QUERY_FOUND
 
+    // A CDN/WAF refusal page is not Credit Karma's answer, and its markers sit
+    // past the 200-char cut below — so name it here, from the full body.
+    throwIfEdgeBlocked(response, body, 'POST', '/graphql')
+
     throw new Error(httpErrorMessage(response.status, body))
   }
 
@@ -389,6 +399,10 @@ export class CreditKarmaClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '')
+      // Checked BEFORE the session_rejected throw: an edge block answers 403
+      // without CK ever seeing the refresh token, so it must not read as a
+      // rejected session (or trigger the re-bootstrap that one gets).
+      throwIfEdgeBlocked(res, body, 'POST', '/member/oauth2/refresh')
       const contentType = res.headers.get('content-type') ?? ''
       const looksHtml = !contentType.includes('json') && /^\s*<(!doctype|html)/i.test(body)
       const detail = looksHtml
@@ -609,6 +623,16 @@ async function readBodyOrEmpty(res: Response): Promise<string> {
  */
 export function isNoQueryFound(status: number, body: string): boolean {
   return status === 400 && /"message"\s*:\s*"No query found"/.test(body)
+}
+
+/**
+ * Throw {@link EdgeBlockedError} when a non-2xx response is a CDN/WAF refusal
+ * page rather than Credit Karma's own answer (chrischall/mcp-host#1015). The
+ * healthcheck reports that as `edge_blocked`, not a rejected credential.
+ */
+function throwIfEdgeBlocked(res: Response, body: string, method: string, path: string): void {
+  const edge = detectEdgeBlock({ body, headers: res.headers, status: res.status })
+  if (edge) throw new EdgeBlockedError(res.status, edge.vendor, { service: 'creditkarma.com', method, path })
 }
 
 /**

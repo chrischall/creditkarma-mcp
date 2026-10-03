@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.1.5](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.4...v3.1.5) (2026-10-03)
+
+
+### Bug Fixes
+
+* **deps:** bump @chrischall/mcp-utils to 2.12.0 ([#216](https://github.com/chrischall/creditkarma-mcp/issues/216)) ([190d725](https://github.com/chrischall/creditkarma-mcp/commit/190d7251e878edc1b26f178a4779ea63d4a49c4b))
+* **deps:** bump @chrischall/mcp-utils to 2.13.0 ([#218](https://github.com/chrischall/creditkarma-mcp/issues/218)) ([df904eb](https://github.com/chrischall/creditkarma-mcp/commit/df904eb94399de9c2bce79d38d5d64e15824bd48))
+* keep credentials and report edge_blocked on CDN/WAF blocks (mcp-utils 2.10.0) ([#215](https://github.com/chrischall/creditkarma-mcp/issues/215)) ([dfbf4f8](https://github.com/chrischall/creditkarma-mcp/commit/dfbf4f85a7fbd4def0b61f056bd0a76ae105c079))
+* report CDN/WAF blocks as edge_blocked, not a rejected credential (mcp-utils 2.9.0) ([#213](https://github.com/chrischall/creditkarma-mcp/issues/213)) ([aa13113](https://github.com/chrischall/creditkarma-mcp/commit/aa131136f8a09310f50dbbe9709ede0b5ee694f0))
+
+
+### Documentation
+
+* stop telling agents to arm the release PR ([#217](https://github.com/chrischall/creditkarma-mcp/issues/217)) ([54fe002](https://github.com/chrischall/creditkarma-mcp/commit/54fe0026e7225c613dbb5088c9b1b8c34487d863))
+
 ## [3.1.4](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.3...v3.1.4) (2026-09-27)
 
 

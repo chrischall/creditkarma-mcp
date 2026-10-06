@@ -4,12 +4,13 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import {
   upsertAccount, upsertCategory, upsertMerchant, upsertTransaction,
-  getSyncState, setSyncState
+  getSyncState, setSyncState, resolveAccountId, attachUrn
 } from '../db.js'
 import { deriveAccountId } from '../accountId.js'
 import { loadAuthIntoClient } from '../auth.js'
 import { isJwtExpired } from '../client.js'
 import { isCkAuthError } from '../authError.js'
+import { refreshBalances, type BalanceRefreshReport } from './balances.js'
 
 export interface SyncArgs {
   force_full?: boolean
@@ -49,6 +50,12 @@ export interface SyncResult {
    *  - `max_pages`: spent this call's page budget; more data remains.
    *  - `page_cap`: hit MAX_SYNC_PAGES; more data may remain. */
   stopped?: 'cursor_stuck' | 'page_cap' | 'max_pages'
+  /**
+   * Account balances, refreshed once per run after the transaction pages.
+   * Each source reports `ok:false` with the error instead of throwing, so a
+   * balance outage never costs the transactions this call already banked.
+   */
+  balances: BalanceRefreshReport
 }
 
 /** Hard ceiling on pages fetched in a single sync. CK pages are ~50–100 txns,
@@ -134,10 +141,7 @@ export async function handleSyncTransactions(
   args: SyncArgs,
   ctx: AppContext
 ): Promise<SyncResult> {
-  // Auto-refresh if token expired and we have a refresh token
-  if (ctx.client.isTokenExpired() || !ctx.client.getToken()) {
-    await refreshOrThrow(ctx)
-  }
+  await ensureAuthenticated(ctx)
 
   // An explicit argument is a decision the caller made for this call and beats
   // the deployment's default, the same precedence every other budget in the
@@ -231,11 +235,19 @@ export async function handleSyncTransactions(
           .prepare('SELECT id FROM transactions WHERE id = ?')
           .get(tx.id)
 
-        const accountId = deriveAccountId(tx.account)
-        upsertAccount(ctx.db, {
-          id: accountId, name: tx.account.name, type: tx.account.type,
-          providerName: tx.account.providerName, display: tx.account.accountTypeAndNumberDisplay
-        })
+        // A row already holding this URN (or an alias left by a merge) wins
+        // over the synthetic id, so a provider rename can't split an account.
+        // Only the account's own derived row has its metadata refreshed.
+        const derivedId = deriveAccountId(tx.account)
+        const urn = tx.account.accountURN || null
+        const accountId = resolveAccountId(ctx.db, derivedId, urn)
+        if (accountId === derivedId) {
+          upsertAccount(ctx.db, {
+            id: accountId, name: tx.account.name, type: tx.account.type,
+            providerName: tx.account.providerName, display: tx.account.accountTypeAndNumberDisplay
+          })
+        }
+        if (urn) attachUrn(ctx.db, accountId, urn)
         if (tx.category) upsertCategory(ctx.db, { id: tx.category.id, name: tx.category.name, type: tx.category.type })
         if (tx.merchant) upsertMerchant(ctx.db, { id: tx.merchant.id, name: tx.merchant.name })
         upsertTransaction(ctx.db, {
@@ -303,6 +315,8 @@ export async function handleSyncTransactions(
         'right now replays the same page. Try again later.'
       : `Sync complete — ${totalCount} transaction(s) over ${pageCount} page(s); the local database is up to date.`
 
+  const balances = await refreshBalances(ctx)
+
   return {
     new: newCount,
     updated: updatedCount,
@@ -311,6 +325,14 @@ export async function handleSyncTransactions(
     another_run_needed: anotherRunNeeded,
     note,
     ...(stopped ? { stopped } : {}),
+    balances,
+  }
+}
+
+/** Make sure the client holds a usable access token before calling CK. */
+export async function ensureAuthenticated(ctx: AppContext): Promise<void> {
+  if (ctx.client.isTokenExpired() || !ctx.client.getToken()) {
+    await refreshOrThrow(ctx)
   }
 }
 
@@ -388,7 +410,9 @@ export function registerSyncTools(server: McpServer, ctx: AppContext): void {
     'ck_sync_transactions',
     {
       description:
-        'Sync Credit Karma transactions into the local SQLite database. ' +
+        'Sync Credit Karma transactions into the local SQLite database, then refresh account ' +
+        'balances once (see ck_get_account_balances; a balance failure is reported in `balances`, ' +
+        'never thrown). ' +
         'Incremental by default (fetches since last sync + 30-day overlap for updates). ' +
         'If no valid token, initiates the login/MFA flow automatically. ' +
         'Bounded and resumable: when it pauses with more to fetch it returns ' +

@@ -73,7 +73,7 @@ since `web` is rejected — and a non-empty `ck-client-version`. Nothing else is
 no cookies, no `Origin`/`Referer`/`User-Agent`.
 
 ```sh
-jq -n --arg h 9b5109d15254ad7fc7d18f597b4026422a69bdc48a4be7d43823866a6ea15915 \
+jq -n --arg h e84296c61147719ced605fbba7bb30ef847903dd07f3a4f7c2ea8d0db107338e \
   '{extensions:{persistedQuery:{version:1,sha256Hash:$h}},
     operationName:"GetTransactions",
     variables:{input:{paginationInput:{afterCursor:null},
@@ -84,7 +84,7 @@ curl -s https://api.creditkarma.com/graphql -X POST \
   -H "Authorization: Bearer $ACCESS" \
   -H 'Content-Type: application/json' \
   -H 'ck-client-name: prime_web' \
-  -H 'ck-client-version: 2.0.31' \
+  -H 'ck-client-version: 2.0.35' \
   --data @/tmp/ck-body.json \
   | jq '.data.prime.transactionsHub.transactionPage'
 ```

@@ -51,7 +51,7 @@ const RATE_LIMIT_BACKOFF_MS = 2000
  * as documentation of where {@link TRANSACTION_QUERY_HASH} came from.
  */
 export const CK_CLIENT_NAME = 'prime_web'
-export const CK_CLIENT_VERSION = '2.0.31'
+export const CK_CLIENT_VERSION = '2.0.35'
 
 /** Operation name that goes alongside the persisted hash. */
 export const TRANSACTION_OPERATION_NAME = 'GetTransactions'
@@ -71,9 +71,68 @@ export const TRANSACTION_OPERATION_NAME = 'GetTransactions'
  * operations.
  */
 export const TRANSACTION_QUERY_HASH =
-  '9b5109d15254ad7fc7d18f597b4026422a69bdc48a4be7d43823866a6ea15915'
+  'e84296c61147719ced605fbba7bb30ef847903dd07f3a4f7c2ea8d0db107338e'
 
 export const GRAPHQL_ENDPOINT = 'https://api.creditkarma.com/graphql'
+
+/**
+ * A safelisted CK operation and the web app it belongs to.
+ *
+ * The gateway keeps one safelist PER APP, keyed on `ck-client-name`: a hash
+ * registered by `credit-health` answers "No query found" when sent as
+ * `prime_web`. So each operation carries the identity of the app whose bundle
+ * published it, and `source` says where to re-read the hash when it rotates.
+ */
+export interface OperationSpec {
+  operationName: string
+  hash: string
+  clientName: string
+  clientVersion: string
+  source: queryHash.HashSource
+}
+
+/** `credit-health` bundle version the credit-report hashes came from. */
+export const CREDIT_HEALTH_CLIENT_VERSION = '1.2.1'
+
+/**
+ * Balance operations. Hashes read 2026-10-06 from the manifests of `prime_web`
+ * 2.0.35 and `credit-health` 1.2.1; {@link CreditKarmaClient.runOperation}
+ * re-reads them in-process if CK rotates them.
+ */
+export const OPERATIONS = {
+  /** Net-worth page for one account type ("cash", "investments", …): server-driven UI. */
+  getAccountL2Page: {
+    operationName: 'getAccountL2Page',
+    hash: 'ae3d3cc725b67ede7ec9216518daf4c06695c583301d6749881a1a55a9c061f2',
+    clientName: CK_CLIENT_NAME,
+    clientVersion: CK_CLIENT_VERSION,
+    source: queryHash.PRIME_WEB_SOURCE,
+  },
+  /** Per-institution connections with their exact last refresh time. */
+  idxConnections: {
+    operationName: 'idxConnections',
+    hash: 'b15bb6b455264783f9c130ddf6a646ba2caf25355937dc18a54833f8aa54d33c',
+    clientName: CK_CLIENT_NAME,
+    clientVersion: CK_CLIENT_VERSION,
+    source: queryHash.PRIME_WEB_SOURCE,
+  },
+  /** Report pull dates per bureau — `getCreditReport` needs one of them exactly. */
+  getCreditReportHistory: {
+    operationName: 'getCreditReportHistory',
+    hash: 'c4292dade7cf16cffd893ac52be341debcbc8e5d23383584a97e8ed3b3e4d00c',
+    clientName: 'credit-health',
+    clientVersion: CREDIT_HEALTH_CLIENT_VERSION,
+    source: queryHash.CREDIT_HEALTH_SOURCE,
+  },
+  /** One bureau's full report: typed tradelines with balances and limits. */
+  getCreditReport: {
+    operationName: 'getCreditReport',
+    hash: 'e18b04e3456cf94d7286a538514340ba13eb6ff5229c18fe8a789fdff02d6801',
+    clientName: 'credit-health',
+    clientVersion: CREDIT_HEALTH_CLIENT_VERSION,
+    source: queryHash.CREDIT_HEALTH_SOURCE,
+  },
+} satisfies Record<string, OperationSpec>
 
 /** Sentinel for "the gateway could not resolve our persisted hash" — distinct
  *  from a page, and not an error, because it has a recovery path. */
@@ -102,6 +161,8 @@ export interface ApiTransaction {
     type: string
     providerName: string
     accountTypeAndNumberDisplay: string
+    /** e.g. `urn:account:fdp::accountid:<uuid>`; present on newer responses only. */
+    accountURN?: string
   }
   category: { id: string; name: string; type: string } | null
   merchant: { id: string; name: string } | null
@@ -136,6 +197,12 @@ export class CreditKarmaClient {
 
   /** Guards `rediscoverQueryHash` to one attempt per client. */
   private hashRediscovered = false
+
+  /** Hashes healed in-process for {@link runOperation}, by operation name. */
+  private operationHashes = new Map<string, string>()
+
+  /** Operations whose hash discovery has already been attempted. */
+  private operationsRediscovered = new Set<string>()
 
   /** Told the rebuilt Cookie header after every successful refresh. */
   private sessionListener: ((cookies: string) => void) | null = null
@@ -250,11 +317,13 @@ export class CreditKarmaClient {
    * `parseTransactionPage` and reactively refreshed by the sync loop, since the
    * manager's reactive replay is HTTP-status-based and can't see GraphQL bodies.)
    */
-  private graphqlPost(variables: Record<string, unknown>): Promise<Response> {
+  private graphqlPost(
+    body: Record<string, unknown>,
+    clientName: string = CK_CLIENT_NAME,
+    clientVersion: string = CK_CLIENT_VERSION,
+  ): Promise<Response> {
     return this.tokens
-      .withAuth((accessToken) =>
-        this.post(GRAPHQL_ENDPOINT, buildPersistedRequest(variables, this.queryHash), accessToken)
-      )
+      .withAuth((accessToken) => this.post(GRAPHQL_ENDPOINT, body, accessToken, clientName, clientVersion))
       .catch((err: unknown) => {
         if (err instanceof Error && /no refresh token/i.test(err.message)) {
           return new Response(null, { status: 401 })
@@ -320,13 +389,14 @@ export class CreditKarmaClient {
    * every other failure throws here.
    */
   private async attemptPage(afterCursor?: string): Promise<TransactionPage | typeof NO_QUERY_FOUND> {
-    let response = await this.graphqlPost(buildVariables(afterCursor))
+    const request = buildPersistedRequest(TRANSACTION_OPERATION_NAME, buildVariables(afterCursor), this.queryHash)
+    let response = await this.graphqlPost(request)
 
     if (response.status === 401) throw new Error('TOKEN_EXPIRED')
 
     if (response.status === 429) {
       await sleep(RATE_LIMIT_BACKOFF_MS)
-      response = await this.graphqlPost(buildVariables(afterCursor))
+      response = await this.graphqlPost(request)
       if (response.status === 401) throw new Error('TOKEN_EXPIRED')
     }
 
@@ -343,6 +413,76 @@ export class CreditKarmaClient {
     throwIfEdgeBlocked(response, body, 'POST', '/graphql')
 
     throw new Error(httpErrorMessage(response.status, body))
+  }
+
+  /**
+   * Run one safelisted operation and return its JSON body.
+   *
+   * Same transport rules as {@link fetchPage} — the shared token lifecycle,
+   * TOKEN_EXPIRED for HTTP 401 or an auth-shaped error code, one replay after a
+   * 429, an edge block named as such — but the body is returned as-is: what a
+   * non-auth GraphQL error MEANS differs per operation (CK answers a credit
+   * report request with a bad date as a generic "An error occurred."), so the
+   * caller's parser decides. A rotated hash is re-read from the operation's
+   * own app bundle, once per operation per client.
+   */
+  async runOperation(op: OperationSpec, variables: Record<string, unknown>): Promise<unknown> {
+    if (!this.token) throw new Error('TOKEN_EXPIRED')
+
+    const result = await this.attemptOperation(op, variables)
+    if (result !== NO_QUERY_FOUND) return result
+
+    if (await this.rediscoverOperationHash(op)) {
+      const replay = await this.attemptOperation(op, variables)
+      if (replay !== NO_QUERY_FOUND) return replay
+    }
+
+    throw new Error(
+      `GraphQL gateway answered "No query found" (HTTP 400) for ${op.operationName}: its persisted-query ` +
+        `hash is not registered for ck-client-name "${op.clientName}", and re-reading it from Credit ` +
+        `Karma's ${op.source.bundle} bundle did not yield a working replacement. Update ` +
+        `OPERATIONS.${op.operationName}.hash in src/client.ts from that bundle's ` +
+        `\`${queryHash.HASH_MANIFEST_MARKER}\` manifest.`,
+    )
+  }
+
+  private async rediscoverOperationHash(op: OperationSpec): Promise<boolean> {
+    if (this.operationsRediscovered.has(op.operationName) || !this.cookies) return false
+    this.operationsRediscovered.add(op.operationName)
+
+    const discovered = await queryHash.discoverQueryHash(op.operationName, this.cookies, op.source)
+    if (!discovered || discovered === this.operationHash(op)) return false
+
+    this.operationHashes.set(op.operationName, discovered)
+    return true
+  }
+
+  private operationHash(op: OperationSpec): string {
+    return this.operationHashes.get(op.operationName) ?? op.hash
+  }
+
+  private async attemptOperation(op: OperationSpec, variables: Record<string, unknown>): Promise<unknown> {
+    const body = buildPersistedRequest(op.operationName, variables, this.operationHash(op))
+    let response = await this.graphqlPost(body, op.clientName, op.clientVersion)
+
+    if (response.status === 401) throw new Error('TOKEN_EXPIRED')
+
+    if (response.status === 429) {
+      await sleep(RATE_LIMIT_BACKOFF_MS)
+      response = await this.graphqlPost(body, op.clientName, op.clientVersion)
+      if (response.status === 401) throw new Error('TOKEN_EXPIRED')
+    }
+
+    if (response.ok) {
+      const json = await response.json() as Record<string, unknown>
+      if (collectErrorCodes(json).some(c => AUTH_ERROR_CODE.test(c))) throw new Error('TOKEN_EXPIRED')
+      return json
+    }
+
+    const text = await readBodyOrEmpty(response)
+    if (isNoQueryFound(response.status, text)) return NO_QUERY_FOUND
+    throwIfEdgeBlocked(response, text, 'POST', '/graphql')
+    throw new Error(httpErrorMessage(response.status, text))
   }
 
   /**
@@ -427,7 +567,7 @@ export class CreditKarmaClient {
     return { accessToken: json.accessToken, refreshToken: json.refreshToken }
   }
 
-  private post(url: string, body: unknown, token: string): Promise<Response> {
+  private post(url: string, body: unknown, token: string, clientName: string, clientVersion: string): Promise<Response> {
     return fetch(url, {
       method: 'POST',
       headers: {
@@ -435,8 +575,8 @@ export class CreditKarmaClient {
         'Content-Type': 'application/json',
         // Required — without this pair the gateway cannot resolve the
         // persisted operation and answers `No query found`.
-        'ck-client-name': CK_CLIENT_NAME,
-        'ck-client-version': CK_CLIENT_VERSION,
+        'ck-client-name': clientName,
+        'ck-client-version': clientVersion,
         'Origin': 'https://www.creditkarma.com',
         'Referer': 'https://www.creditkarma.com/',
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
@@ -496,12 +636,13 @@ export function warnIfRefreshTokenExpired(refreshToken: string | undefined | nul
  * reads, but it is no longer sent — or even loaded — at runtime.
  */
 function buildPersistedRequest(
+  operationName: string,
   variables: Record<string, unknown>,
   sha256Hash: string,
 ): Record<string, unknown> {
   return {
     extensions: { persistedQuery: { version: 1, sha256Hash } },
-    operationName: TRANSACTION_OPERATION_NAME,
+    operationName,
     variables,
   }
 }

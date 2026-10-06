@@ -5,6 +5,7 @@ import { initDb, getSyncState, setSyncState } from '../../src/db.js'
 import type { AppContext } from '../../src/index.js'
 import type { TransactionPage } from '../../src/client.js'
 import { fakeServer } from '../helpers.js'
+import { idxConnections, l2Page, reportHistory, creditReport, tradeline } from '../fixtures/balances.js'
 
 const makeTx = (id: string, date: string, overrides = {}) => ({
   id, date, description: `Tx ${id}`, status: 'posted',
@@ -38,6 +39,9 @@ describe('ck_sync_transactions', () => {
       client: new CreditKarmaClient('valid-token'),
       db: initDb(':memory:')
     }
+    // Balances are refreshed at the end of every sync. Never let that reach the
+    // network here; tests that care about balances re-stub it.
+    vi.spyOn(ctx.client, 'runOperation').mockRejectedValue(new Error('balances not stubbed'))
   })
 
   afterEach(() => {
@@ -617,6 +621,9 @@ describe('registerSyncTools', () => {
       client: new CreditKarmaClient('valid-token'),
       db: initDb(':memory:')
     }
+    // Balances are refreshed at the end of every sync. Never let that reach the
+    // network here; tests that care about balances re-stub it.
+    vi.spyOn(ctx.client, 'runOperation').mockRejectedValue(new Error('balances not stubbed'))
   })
   afterEach(() => {
     vi.useRealTimers()
@@ -640,5 +647,98 @@ describe('registerSyncTools', () => {
     expect(result.content[0].type).toBe('text')
     const body = JSON.parse(result.content[0].text)
     expect(body).toMatchObject({ new: 1, updated: 0, total: 1 })
+  })
+})
+
+describe('ck_sync_transactions — balances and account identity', () => {
+  let ctx: AppContext
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2024-02-15T12:00:00Z'))
+    ctx = { client: new CreditKarmaClient('valid-token'), db: initDb(':memory:') }
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('refreshes balances once per run and reports them alongside the transactions', async () => {
+    vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')]))
+    const ops = vi.spyOn(ctx.client, 'runOperation').mockImplementation(async (op) => {
+      switch (op.operationName) {
+        case 'idxConnections': return idxConnections([])
+        case 'getAccountL2Page': return l2Page([])
+        case 'getCreditReportHistory': return reportHistory(['2024-02-01T10:00:00Z'])
+        default: return creditReport({ creditCards: [tradeline({ hash: 'c1', balance: '5.00', limit: '50.00' })] })
+      }
+    })
+
+    const result = await handleSyncTransactions({}, ctx)
+
+    expect(result.total).toBe(1)
+    expect(result.balances).toEqual({
+      linked: { ok: true, updated: 0, unparsed: 0 },
+      credit_report: { ok: true, bureau: 'transunion', report_date: '2024-02-01T10:00:00Z', updated: 1, removed: 0 },
+    })
+    // idxConnections + 4 account-type pages + history + report.
+    expect(ops).toHaveBeenCalledTimes(7)
+  })
+
+  it('finishes the transaction sync and reports — not throws — when the balance fetch fails', async () => {
+    vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')]))
+    vi.spyOn(ctx.client, 'runOperation').mockRejectedValue(new Error('HTTP 503: unavailable'))
+
+    const result = await handleSyncTransactions({}, ctx)
+
+    expect(result).toMatchObject({
+      new: 1, total: 1,
+      balances: {
+        linked: { ok: false, error: 'HTTP 503: unavailable' },
+        credit_report: { ok: false, error: 'HTTP 503: unavailable' },
+      },
+    })
+    expect(getSyncState(ctx.db, 'last_sync_date')).toBe('2024-02-15')
+    expect((ctx.db.prepare('SELECT COUNT(*) AS n FROM transactions').get() as { n: number }).n).toBe(1)
+  })
+
+  it('does not refresh balances when the transaction sync itself fails', async () => {
+    vi.spyOn(ctx.client, 'fetchPage').mockRejectedValueOnce(new Error('HTTP 500: boom'))
+    const ops = vi.spyOn(ctx.client, 'runOperation')
+    await expect(handleSyncTransactions({}, ctx)).rejects.toThrow('HTTP 500: boom')
+    expect(ops).not.toHaveBeenCalled()
+  })
+
+  it('files a transaction under the account already holding its URN, even after a provider rename', async () => {
+    vi.spyOn(ctx.client, 'runOperation').mockRejectedValue(new Error('skip'))
+    const acct = (providerName: string) => ({
+      id: '', name: 'Card', type: 'credit', providerName, accountTypeAndNumberDisplay: 'Credit (..1234)',
+      accountURN: 'urn:account:fdp::accountid:test-1',
+    })
+    vi.spyOn(ctx.client, 'fetchPage')
+      .mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10', { account: acct('Sample Bank') })]))
+      .mockResolvedValueOnce(makePage([makeTx('tx2', '2024-02-11', { account: acct('Sample Bank NA') })]))
+
+    await handleSyncTransactions({}, ctx)
+    await handleSyncTransactions({ force_full: true }, ctx)
+
+    const accounts = ctx.db.prepare('SELECT id, account_urn FROM accounts').all()
+    expect(accounts).toEqual([{ id: 'Sample Bank|1234', account_urn: 'urn:account:fdp::accountid:test-1' }])
+    const ids = ctx.db.prepare('SELECT DISTINCT account_id FROM transactions').all()
+    expect(ids).toEqual([{ account_id: 'Sample Bank|1234' }])
+  })
+
+  it('files a transaction under the merge survivor when its derived id was retired', async () => {
+    vi.spyOn(ctx.client, 'runOperation').mockRejectedValue(new Error('skip'))
+    ctx.db.prepare("INSERT INTO accounts (id, name) VALUES ('Survivor|9999', 'Card')").run()
+    ctx.db.prepare("INSERT INTO account_aliases (alias, account_id) VALUES ('Retired Co|9999', 'Survivor|9999')").run()
+    vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10', {
+      account: { id: '', name: 'Card', type: 'credit', providerName: 'Retired Co', accountTypeAndNumberDisplay: 'Credit (..9999)' },
+    })]))
+
+    await handleSyncTransactions({}, ctx)
+
+    expect(ctx.db.prepare("SELECT id FROM accounts WHERE id = 'Retired Co|9999'").get()).toBeUndefined()
+    expect(ctx.db.prepare("SELECT account_id FROM transactions WHERE id = 'tx1'").get()).toEqual({ account_id: 'Survivor|9999' })
   })
 })

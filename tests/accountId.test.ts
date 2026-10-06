@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveAccountId } from '../src/accountId.js'
+import { deriveAccountId, parseLast4 } from '../src/accountId.js'
 
 describe('deriveAccountId', () => {
   it('returns CK-provided id when non-empty', () => {
@@ -88,5 +88,39 @@ describe('deriveAccountId', () => {
       id: '', providerName: 'Ally', accountTypeAndNumberDisplay: 'Savings (..7148)'
     })
     expect(checking).not.toBe(savings)
+  })
+})
+
+describe('parseLast4', () => {
+  it('reads four digits from a transaction display string', () => {
+    expect(parseLast4('Credit Card (..1234)')).toBe('1234')
+  })
+
+  it('reads four digits from a net-worth display string (three dots)', () => {
+    expect(parseLast4('Example Bank (...5678)')).toBe('5678')
+  })
+
+  it('returns null for a non-numeric fragment like "(..ount)"', () => {
+    expect(parseLast4('Bank (..ount)')).toBeNull()
+  })
+
+  it('returns null when the fragment is not exactly four digits', () => {
+    expect(parseLast4('Bank (..12345)')).toBeNull()
+    expect(parseLast4('Bank (..123)')).toBeNull()
+  })
+
+  it('returns null when there is no fragment at all', () => {
+    expect(parseLast4('Checking')).toBeNull()
+    expect(parseLast4('')).toBeNull()
+    expect(parseLast4(null)).toBeNull()
+    expect(parseLast4(undefined)).toBeNull()
+  })
+})
+
+describe('deriveAccountId with three-dot displays', () => {
+  it('produces the same id for "(..1234)" and "(...1234)"', () => {
+    const two = deriveAccountId({ id: '', providerName: 'Example Bank', accountTypeAndNumberDisplay: 'Checking (..1234)' })
+    const three = deriveAccountId({ id: '', providerName: 'Example Bank', accountTypeAndNumberDisplay: 'Example Bank (...1234)' })
+    expect(three).toBe(two)
   })
 })

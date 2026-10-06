@@ -35,6 +35,8 @@ describe('refreshOrThrow — re-reading browser cookies', () => {
       client: new CreditKarmaClient(),
       db: initDb(':memory:')
     }
+    // Keep the end-of-sync balance refresh off the network.
+    vi.spyOn(ctx.client, 'runOperation').mockRejectedValue(new Error('balances not stubbed'))
   })
 
   afterEach(() => {

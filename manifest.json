@@ -64,7 +64,7 @@
     },
     {
       "name": "ck_sync_transactions",
-      "description": "Sync Credit Karma transactions into the local SQLite database"
+      "description": "Sync Credit Karma transactions into the local SQLite database, then refresh account balances"
     },
     {
       "name": "ck_list_transactions",
@@ -85,6 +85,10 @@
     {
       "name": "ck_get_account_summary",
       "description": "Return per-account debit, credit, and net totals"
+    },
+    {
+      "name": "ck_get_account_balances",
+      "description": "Current balance, credit limit and as-of time of every account (linked accounts and credit-report cards/loans), with a stale flag; refresh:true fetches live first"
     },
     {
       "name": "ck_query_sql",

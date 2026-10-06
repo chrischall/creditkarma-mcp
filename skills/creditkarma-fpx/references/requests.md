@@ -49,7 +49,7 @@ from `src/transaction.graphql` is rejected with
 selection set, not a request payload.
 
 ```sh
-GET_TRANSACTIONS_HASH=9b5109d15254ad7fc7d18f597b4026422a69bdc48a4be7d43823866a6ea15915
+GET_TRANSACTIONS_HASH=e84296c61147719ced605fbba7bb30ef847903dd07f3a4f7c2ea8d0db107338e
 
 build_body() {   # $1 = afterCursor (or the string "null")
   jq -n --arg h "$GET_TRANSACTIONS_HASH" --argjson after "$1" \
@@ -71,7 +71,7 @@ curl -s https://api.creditkarma.com/graphql -X POST \
   -H "Authorization: Bearer $ACCESS" \
   -H 'Content-Type: application/json' \
   -H 'ck-client-name: prime_web' \
-  -H 'ck-client-version: 2.0.31' \
+  -H 'ck-client-version: 2.0.35' \
   --data @/tmp/ck-body.json > /tmp/ck-resp.json
 ```
 

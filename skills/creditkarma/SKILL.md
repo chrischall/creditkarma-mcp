@@ -101,7 +101,7 @@ The MCP handles auth automatically once any of the three paths is configured.
 | `ck_get_spending_by_category(start_date?, end_date?)` | Spending totals grouped by category |
 | `ck_get_spending_by_merchant(start_date?, end_date?, limit?)` | Spending totals grouped by merchant |
 | `ck_get_account_summary` | Transaction counts and totals per account |
-| `ck_get_account_balances(refresh?)` | Balance per account: institution, type, last 4, current balance, credit limit, `balance_as_of`, `source` (`linked` or `credit_report`) and `stale`. Liabilities are negative. Credit-report balances (cards, loans) lag 2–5 weeks by nature — say so when quoting them |
+| `ck_get_account_balances(refresh?, include_matched?)` | Balance per account: institution, type, last 4, current balance, available credit and credit limit (cards), `balance_as_of`, `source` (`linked` — live from the aggregator, cards and loans included — or `credit_report`) and `stale`. Liabilities are negative. Prefer `linked` figures; credit-report balances lag 2–5 weeks — say so when quoting one. A credit-report row duplicating a linked account is hidden unless `include_matched` |
 | `ck_query_sql(sql, max_rows?)` | Read-only SQL query against the local database (SELECT only; at most `max_rows` rows, default 500 / max 5000 — `truncated: true` means page with LIMIT/OFFSET or aggregate) |
 
 ## Workflows
@@ -118,6 +118,7 @@ The MCP handles auth automatically once any of the three paths is configured.
 **Balances:**
 ```
 ck_get_account_balances                # last synced balances (ck_sync_transactions refreshes them)
+ck_get_account_balances(include_matched: true)  # also show credit-report duplicates of linked accounts
 ck_get_account_balances(refresh: true) # fetch live first
 ```
 
@@ -148,7 +149,7 @@ GROUP BY c.name ORDER BY total DESC
 transactions (id, date, description, status, amount, account_id, category_id, merchant_id, raw_json)
 accounts     (id, name, type, provider_name, display, last4, account_urn,
               current_balance, available_balance, credit_limit,
-              balance_as_of, balances_synced_at, balance_source)
+              balance_as_of, balances_synced_at, balance_source, matched_account_id)
 account_aliases (alias, account_id)
 categories   (id, name, type)
 merchants    (id, name)

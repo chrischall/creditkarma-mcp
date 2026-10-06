@@ -5,7 +5,7 @@ import { initDb, getSyncState, setSyncState } from '../../src/db.js'
 import type { AppContext } from '../../src/index.js'
 import type { TransactionPage } from '../../src/client.js'
 import { fakeServer } from '../helpers.js'
-import { idxConnections, l2Page, reportHistory, creditReport, tradeline } from '../fixtures/balances.js'
+import { reportHistory, creditReport, tradeline, idxAuthResponse, vaultAccount, vaultConnection } from '../fixtures/balances.js'
 
 const makeTx = (id: string, date: string, overrides = {}) => ({
   id, date, description: `Tx ${id}`, status: 'posted',
@@ -667,27 +667,31 @@ describe('ck_sync_transactions — balances and account identity', () => {
     vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')]))
     const ops = vi.spyOn(ctx.client, 'runOperation').mockImplementation(async (op) => {
       switch (op.operationName) {
-        case 'idxConnections': return idxConnections([])
-        case 'getAccountL2Page': return l2Page([])
+        case 'idxAuth': return idxAuthResponse('idx-token')
         case 'getCreditReportHistory': return reportHistory(['2024-02-01T10:00:00Z'])
         default: return creditReport({ creditCards: [tradeline({ hash: 'c1', balance: '5.00', limit: '50.00' })] })
       }
     })
+    const vault = vi.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify([
+      vaultConnection('Example Bank', [vaultAccount({ urn: 'urn:account:fdp::accountid:chk', balance: '10.00' })]),
+    ])))
 
     const result = await handleSyncTransactions({}, ctx)
 
     expect(result.total).toBe(1)
     expect(result.balances).toEqual({
-      linked: { ok: true, updated: 0, unparsed: 0, dropped: 0 },
+      linked: { ok: true, updated: 1, no_balance: 0, removed: 0 },
       credit_report: { ok: true, bureau: 'transunion', report_date: '2024-02-01T10:00:00Z', updated: 1, removed: 0 },
+      matched: 0,
     })
-    // idxConnections + 3 account-type pages + history + report.
-    expect(ops).toHaveBeenCalledTimes(6)
+    // idxAuth + history + report on CK, one vault search at Intuit.
+    expect(ops).toHaveBeenCalledTimes(3)
+    expect(vault).toHaveBeenCalledTimes(1)
   })
 
   it('skips the balance refresh on a call that pauses with more pages to fetch', async () => {
     // Hosted, CK_SYNC_MAX_PAGES exists so each call answers inside the
-    // client's timeout; seven extra GraphQL calls on every step would eat that.
+    // client's timeout; four extra round trips on every step would eat that.
     vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')], true, 'c1'))
     const ops = vi.spyOn(ctx.client, 'runOperation')
 

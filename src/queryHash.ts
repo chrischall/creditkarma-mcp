@@ -36,6 +36,11 @@ export const CREDIT_HEALTH_SOURCE: HashSource = {
   bundle: 'credit-health',
 }
 
+export const IDX_GATEWAY_SOURCE: HashSource = {
+  pageUrl: 'https://www.creditkarma.com/connect/manage-accounts',
+  bundle: 'idx-gateway',
+}
+
 /** Call site the hash manifest is passed to; identifies the right chunk. */
 export const HASH_MANIFEST_MARKER = 'usePregeneratedHashes'
 

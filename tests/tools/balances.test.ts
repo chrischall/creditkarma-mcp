@@ -1,19 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
-  refreshBalances, handleGetAccountBalances, registerBalanceTools, bureauFromEnv,
-  STALE_DAYS, LINKED_ACCOUNT_TYPES,
+  refreshBalances, handleGetAccountBalances, registerBalanceTools, bureauFromEnv, STALE_DAYS,
 } from '../../src/tools/balances.js'
 import { CreditKarmaClient, type OperationSpec } from '../../src/client.js'
-import { initDb, upsertAccount, upsertTransaction, upsertCreditReportAccount, setLinkedBalance } from '../../src/db.js'
+import { initDb, upsertAccount, upsertTransaction, attachUrn, upsertCreditReportAccount, setLinkedBalance } from '../../src/db.js'
+import { VAULT_SEARCH_URL } from '../../src/vault.js'
 import type { AppContext } from '../../src/index.js'
 import { fakeServer } from '../helpers.js'
 import {
-  l2Page, linkedRow, attentionRow, investmentRow, idxConnections, reportHistory, creditReport, tradeline,
+  reportHistory, creditReport, tradeline, vaultAccount, vaultConnection, idxAuthResponse,
 } from '../fixtures/balances.js'
 
 type Handler = (variables: Record<string, unknown>) => unknown
 
-/** Route runOperation by operation name so tests describe CK, not call order. */
+const NOW = new Date('2024-02-15T12:00:00Z')
+const URN = (s: string) => `urn:account:fdp::accountid:${s}`
+
+/** Route CK GraphQL by operation name so tests describe CK, not call order. */
 function stubCk(ctx: AppContext, handlers: Partial<Record<string, Handler>>) {
   return vi.spyOn(ctx.client, 'runOperation').mockImplementation(async (op: OperationSpec, variables) => {
     const h = handlers[op.operationName]
@@ -22,27 +25,35 @@ function stubCk(ctx: AppContext, handlers: Partial<Record<string, Handler>>) {
   })
 }
 
-const NOW = new Date('2024-02-15T12:00:00Z')
+/** Intuit's vault answers `connections`; any other URL is a test bug. */
+function stubVault(connections: unknown, status = 200) {
+  return vi.spyOn(global, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+    if (!String(input).startsWith(VAULT_SEARCH_URL)) throw new Error(`unexpected fetch ${String(input)}`)
+    return new Response(JSON.stringify(connections), { status })
+  })
+}
 
-const happyCk = (): Partial<Record<string, Handler>> => ({
-  idxConnections: () => idxConnections([{ providerName: 'Example Bank', lastRefreshTimeStamp: '2024-02-15T09:00:00Z' }]),
-  getAccountL2Page: (v) => (v.input as { accountType: string }).accountType === 'cash'
-    ? l2Page([
-        linkedRow('Everyday Checking', '$1,234.56', 'Example Bank    (...1234)\n3 hr ago'),
-        attentionRow('Family HSA', 'Sample Health (...4321)', '$9,000', 'Account needs attention'),
-      ])
-    : l2Page([]),
-  getCreditReportHistory: () => reportHistory(['2024-01-01T10:00:00Z', '2024-02-01T10:00:00Z'], ['2024-02-02T10:00:00Z']),
-  getCreditReport: (v) => {
-    expect(v).toEqual({ bureau: 1, date: '2024-02-01T10:00:00Z' })
-    return creditReport({
-      creditCards: [
-        tradeline({ hash: 'card1', institution: 'Example Card Co', balance: '250.00', limit: '5000.00', dateReported: '2024-01-25' }),
-        tradeline({ hash: 'closed', institution: 'Old Card', balance: '0.00', limit: '100.00', isOpen: false }),
-      ],
-      autoLoans: [tradeline({ hash: 'car1', institution: 'Example Auto', accountType: 'Auto Loan', balance: '8000.00', dateReported: '2024-01-20' })],
-    })
+const card = vaultAccount({
+  urn: URN('card'), masked: 'XXXXXXXXXXXX4321', nickName: 'Rewards Card', accountType: 'CREDITCARD',
+  accountCategory: 'LINEOFCREDIT', balance: '1250.50', creditMaximumAmount: 10000, refreshedAt: '2024-02-15T09:00:00Z',
+})
+const checking = vaultAccount({ urn: URN('chk'), masked: 'XXXX1234', nickName: 'Everyday Checking', balance: '500.00' })
+const mortgage = vaultAccount({ urn: URN('mtg'), masked: '7777', nickName: 'Mortgage', accountType: 'MORTGAGE', accountCategory: 'LOAN', balance: '' })
+
+const ck = (over: Partial<Record<string, Handler>> = {}): Partial<Record<string, Handler>> => ({
+  idxAuth: (v) => {
+    expect(v).toEqual({ source: 'NETWORTH', origin: 'MANAGE_ACCOUNTS' })
+    return idxAuthResponse('idx-token')
   },
+  getCreditReportHistory: () => reportHistory(['2024-01-01T10:00:00Z', '2024-02-01T10:00:00Z'], ['2024-02-02T10:00:00Z']),
+  getCreditReport: () => creditReport({
+    creditCards: [
+      tradeline({ hash: 'card1', institution: 'EXAMPLE CARD CO', balance: '900.00', limit: '10000.00', dateReported: '2024-01-25' }),
+      tradeline({ hash: 'other', institution: 'Unlinked Bank', balance: '40.00', limit: '500.00', dateReported: '2024-01-20' }),
+      tradeline({ hash: 'closed', institution: 'Old Card', balance: '0.00', limit: '100.00', isOpen: false }),
+    ],
+  }),
+  ...over,
 })
 
 describe('refreshBalances', () => {
@@ -62,184 +73,114 @@ describe('refreshBalances', () => {
 
   const row = (id: string) => ctx.db.prepare('SELECT * FROM accounts WHERE id = ?').get(id) as Record<string, unknown> | undefined
 
-  it('stores linked balances on the transaction account they belong to, with the exact refresh time', async () => {
-    upsertAccount(ctx.db, { id: 'Example Bank|1234', name: 'Checking', providerName: 'Example Bank', display: 'Checking (..1234)' })
-    stubCk(ctx, happyCk())
+  it('stores linked cards from the vault with their limit, available credit and own refresh time', async () => {
+    stubCk(ctx, ck())
+    stubVault([vaultConnection('Example Card Co', [card]), vaultConnection('Example Bank', [checking, mortgage])])
 
     const report = await refreshBalances(ctx, NOW)
 
-    expect(report.linked).toEqual({ ok: true, updated: 2, unparsed: 0, dropped: 0 })
-    expect(row('Example Bank|1234')).toMatchObject({
-      name: 'Checking', current_balance: 1234.56, balance_as_of: '2024-02-15T09:00:00Z',
-      balances_synced_at: NOW.toISOString(), balance_source: 'linked',
+    expect(report.linked).toEqual({ ok: true, updated: 2, no_balance: 1, removed: 0 })
+    expect(row(URN('card'))).toMatchObject({
+      name: 'Rewards Card', type: 'CREDITCARD', provider_name: 'Example Card Co', last4: '4321', account_urn: URN('card'),
+      current_balance: -1250.5, credit_limit: 10000, available_balance: 8749.5,
+      balance_as_of: '2024-02-15T09:00:00Z', balances_synced_at: NOW.toISOString(), balance_source: 'linked',
     })
+    expect(row(URN('chk'))).toMatchObject({ current_balance: 500, credit_limit: null })
+    expect(row(URN('mtg'))).toBeUndefined()
   })
 
-  it('lands on the existing transaction account when the page shows a shortened provider name', async () => {
-    upsertAccount(ctx.db, { id: 'Example Bank Personal|1234', name: 'Checking', providerName: 'Example Bank Personal', display: 'Bank (..1234)' })
-    stubCk(ctx, happyCk())
+  it('lands on the transaction account already holding the URN', async () => {
+    upsertAccount(ctx.db, { id: 'Example Card Co|4321', name: 'Card', providerName: 'Example Card Co', display: 'Credit (..4321)' })
+    attachUrn(ctx.db, 'Example Card Co|4321', URN('card'))
+    stubCk(ctx, ck())
+    stubVault([vaultConnection('Example Card Co', [card])])
     await refreshBalances(ctx, NOW)
-    expect(row('Example Bank Personal|1234')!.current_balance).toBe(1234.56)
-    expect(row('Example Bank|1234')).toBeUndefined()
+    expect(row('Example Card Co|4321')).toMatchObject({ name: 'Card', current_balance: -1250.5 })
+    expect(row(URN('card'))).toBeUndefined()
   })
 
-  it('does not fetch the net-worth loans page — loans come from the credit report', async () => {
-    const ops = stubCk(ctx, happyCk())
+  it('keeps updating the row an earlier refresh created, even when a URN-less look-alike now exists', async () => {
+    stubCk(ctx, ck())
+    stubVault([vaultConnection('Example Card Co', [card])])
+    await refreshBalances(ctx, NOW)                       // creates the URN-keyed row
+    upsertAccount(ctx.db, { id: 'Example Card Co|4321', name: 'Look-alike', providerName: 'Example Card Co', display: 'Credit (..4321)' })
     await refreshBalances(ctx, NOW)
-    expect(LINKED_ACCOUNT_TYPES).toEqual(['cash', 'investments', 'property'])
-    const types = ops.mock.calls
-      .filter(([op]) => op.operationName === 'getAccountL2Page')
-      .map(([, v]) => (v.input as { accountType: string }).accountType)
-    expect(types).toEqual(['cash', 'investments', 'property'])
+    expect(row(URN('card'))).toMatchObject({ current_balance: -1250.5, balance_source: 'linked' })
+    expect(row('Example Card Co|4321')).toMatchObject({ current_balance: null, account_urn: null })
   })
 
-  it('creates a row for a linked account with no transactions, timing it from the relative age when no connection matches', async () => {
-    stubCk(ctx, {
-      ...happyCk(),
-      getAccountL2Page: (v) => (v.input as { accountType: string }).accountType === 'cash'
-        ? l2Page([linkedRow('Savings', '$10', 'Other CU (...7777)\n2 hr ago')])
-        : l2Page([]),
-    })
+  it('finds a URN-less transaction account by institution and last4, and tags it with the URN', async () => {
+    upsertAccount(ctx.db, { id: 'Example Card Co|4321', name: 'Card', providerName: 'Example Card Co', display: 'Credit (..4321)' })
+    stubCk(ctx, ck())
+    stubVault([vaultConnection('Example Card Co   ', [card])])
     await refreshBalances(ctx, NOW)
-    expect(row('Other CU|7777')).toMatchObject({ name: 'Savings', current_balance: 10, balance_as_of: '2024-02-15T10:00:00.000Z' })
+    expect(row('Example Card Co|4321')).toMatchObject({ account_urn: URN('card'), current_balance: -1250.5 })
   })
 
-  it('lands a linked balance on the merge survivor via its alias', async () => {
-    upsertAccount(ctx.db, { id: 'Survivor|1234', name: 's' })
-    ctx.db.prepare("INSERT INTO account_aliases (alias, account_id) VALUES ('Example Bank|1234', 'Survivor|1234')").run()
-    stubCk(ctx, happyCk())
-    await refreshBalances(ctx, NOW)
-    expect(row('Survivor|1234')!.current_balance).toBe(1234.56)
-    expect(row('Example Bank|1234')).toBeUndefined()
-  })
-
-  it('times a truncated investment provider from its connection by prefix', async () => {
-    stubCk(ctx, {
-      ...happyCk(),
-      idxConnections: () => idxConnections([{ providerName: 'Example Brokerage - Individual', lastRefreshTimeStamp: '2024-02-14T08:00:00Z' }]),
-      getAccountL2Page: (v) => (v.input as { accountType: string }).accountType === 'investments'
-        ? l2Page([investmentRow('Brokerage', '$500', 'Example Brokerage - Ind... (...9876)', '▲ $5 (1.0%)')])
-        : l2Page([]),
-    })
-    await refreshBalances(ctx, NOW)
-    expect(row('Example Brokerage - Ind...|9876')).toMatchObject({ current_balance: 500, balance_as_of: '2024-02-14T08:00:00Z' })
-  })
-
-  it('skips a stale duplicate record and removes the row an earlier sync stored for it', async () => {
-    // The row a previous version stored for the stale "(...8-01)" record.
+  it('retires linked balances the vault no longer returns', async () => {
     setLinkedBalance(ctx.db, {
-      id: 'Example Brokerage - Ind...|8-01', name: 'College Plan', provider: 'Example Brokerage - Ind...',
-      display: 'Example Brokerage - Ind... (...8-01)', last4: null, balance: 90, asOf: null, syncedAt: 'earlier',
+      id: 'Old|1', urn: URN('old'), name: 'Old', provider: 'Old', last4: null, type: 'SAVINGS',
+      balance: 5, creditLimit: null, availableCredit: null, asOf: null, syncedAt: 'earlier',
     })
-    stubCk(ctx, {
-      ...happyCk(),
-      getAccountL2Page: (v) => (v.input as { accountType: string }).accountType === 'investments'
-        ? l2Page([
-            investmentRow('College Plan', '$100', 'Example Brokerage - Ind... (...6801)', '▲ $1 (1.0%)'),
-            investmentRow('College Plan', '$90', 'Example Brokerage - Ind... (...8-01)', ''),
-          ])
-        : l2Page([]),
-    })
-
+    stubCk(ctx, ck())
+    stubVault([vaultConnection('Example Bank', [checking])])
     const report = await refreshBalances(ctx, NOW)
-
-    expect(report.linked).toEqual({ ok: true, updated: 1, unparsed: 0, dropped: 1 })
-    expect(row('Example Brokerage - Ind...|6801')!.current_balance).toBe(100)
-    expect(row('Example Brokerage - Ind...|8-01')).toBeUndefined()
+    expect(report.linked).toMatchObject({ ok: true, removed: 1 })
+    expect(row('Old|1')).toBeUndefined()
   })
 
-  it('never deletes a dropped duplicate\'s row that has transactions', async () => {
-    upsertAccount(ctx.db, { id: 'Example Brokerage - Ind...|8-01', name: 'College Plan' })
-    upsertTransaction(ctx.db, { id: 't', date: '2024-01-01', description: 'x', status: 'posted', amount: 1, accountId: 'Example Brokerage - Ind...|8-01', categoryId: null, merchantId: null, rawJson: null })
-    stubCk(ctx, {
-      ...happyCk(),
-      getAccountL2Page: (v) => (v.input as { accountType: string }).accountType === 'investments'
-        ? l2Page([
-            investmentRow('College Plan', '$100', 'Example Brokerage - Ind... (...6801)', '▲ $1 (1.0%)'),
-            investmentRow('College Plan', '$90', 'Example Brokerage - Ind... (...8-01)', ''),
-          ])
-        : l2Page([]),
+  it('reports — not throws — when idxAuth refuses, leaving stored linked balances alone', async () => {
+    setLinkedBalance(ctx.db, {
+      id: 'Kept|1', urn: URN('kept'), name: 'K', provider: 'K', last4: null, type: 'SAVINGS',
+      balance: 5, creditLimit: null, availableCredit: null, asOf: null, syncedAt: 'earlier',
     })
-    await refreshBalances(ctx, NOW)
-    expect(row('Example Brokerage - Ind...|8-01')).toBeDefined()
+    stubCk(ctx, ck({ idxAuth: () => idxAuthResponse(null, 'User not on trusted device') }))
+    const fetchSpy = stubVault([])
+    const report = await refreshBalances(ctx, NOW)
+    expect(report.linked).toEqual({ ok: false, error: 'idxAuth failed: User not on trusted device' })
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(row('Kept|1')).toBeDefined()
   })
 
-  it('still records linked balances when idxConnections fails, using the relative age', async () => {
-    stubCk(ctx, { ...happyCk(), idxConnections: () => { throw new Error('idx down') } })
+  it('reports a vault HTTP failure', async () => {
+    stubCk(ctx, ck())
+    stubVault({ error: 'unauthorized' }, 401)
     const report = await refreshBalances(ctx, NOW)
-    expect(report.linked).toMatchObject({ ok: true, updated: 2 })
-    expect(row('Example Bank|1234')!.balance_as_of).toBe('2024-02-15T09:00:00.000Z')
-  })
-
-  it('reports rows it could not parse without failing the rest', async () => {
-    stubCk(ctx, {
-      ...happyCk(),
-      getAccountL2Page: (v) => (v.input as { accountType: string }).accountType === 'cash'
-        ? l2Page([
-            { item: { views: [{ a: { text: 'Example Bank (...4444)' }, b: { text: '$1' }, c: { text: '+$2' } }] } },
-            linkedRow('Fine', '$3', 'Example Bank (...5555)\n1 hr ago'),
-          ])
-        : l2Page([]),
-    })
-    const report = await refreshBalances(ctx, NOW)
-    expect(report.linked).toEqual({ ok: true, updated: 1, unparsed: 1, dropped: 0 })
-  })
-
-  it('writes NO linked balances if any account-type page fails', async () => {
-    stubCk(ctx, {
-      ...happyCk(),
-      getAccountL2Page: (v) => {
-        if ((v.input as { accountType: string }).accountType === 'investments') throw new Error('HTTP 500: boom')
-        return l2Page([linkedRow('Everyday Checking', '$1', 'Example Bank (...1234)\n1 hr ago')])
-      },
-    })
-    const report = await refreshBalances(ctx, NOW)
-    expect(report.linked).toEqual({ ok: false, error: 'HTTP 500: boom' })
-    expect(row('Example Bank|1234')).toBeUndefined()
+    expect(report.linked).toMatchObject({ ok: false, error: expect.stringMatching(/Intuit vault search failed: HTTP 401/) })
   })
 
   it('stores open credit-report accounts as negative balances and drops closed ones', async () => {
-    stubCk(ctx, happyCk())
+    stubCk(ctx, ck())
+    stubVault([])
     const report = await refreshBalances(ctx, NOW)
     expect(report.credit_report).toEqual({ ok: true, bureau: 'transunion', report_date: '2024-02-01T10:00:00Z', updated: 2, removed: 0 })
-    expect(row('cr:transunion:card1')).toMatchObject({
-      name: 'Example Card Co', current_balance: -250, credit_limit: 5000, balance_as_of: '2024-01-25', balance_source: 'credit_report',
-    })
-    expect(row('cr:transunion:car1')).toMatchObject({ current_balance: -8000, credit_limit: null })
+    expect(row('cr:transunion:card1')).toMatchObject({ current_balance: -900, credit_limit: 10000, balance_as_of: '2024-01-25', balance_source: 'credit_report' })
     expect(row('cr:transunion:closed')).toBeUndefined()
   })
 
   it('removes a credit-report account that disappeared from the newest report', async () => {
-    upsertCreditReportAccount(ctx.db, {
-      key: 'cr:transunion:gone', institution: 'Gone', type: 'Credit Card', category: 'credit_card',
-      currentBalance: -1, creditLimit: 1, asOf: '2023-12-01',
-    }, 'earlier')
-    stubCk(ctx, happyCk())
+    upsertCreditReportAccount(ctx.db, { key: 'cr:transunion:gone', institution: 'Gone', type: 'Credit Card', category: 'credit_card', currentBalance: -1, creditLimit: 1, asOf: '2023-12-01' }, 'earlier')
+    stubCk(ctx, ck())
+    stubVault([])
     const report = await refreshBalances(ctx, NOW)
     expect(report.credit_report).toMatchObject({ ok: true, removed: 1 })
-    expect(row('cr:transunion:gone')).toBeUndefined()
   })
 
   it('uses Equifax when CK_CREDIT_BUREAU says so', async () => {
     process.env.CK_CREDIT_BUREAU = 'equifax'
     const seen: unknown[] = []
-    stubCk(ctx, {
-      ...happyCk(),
-      getCreditReportHistory: () => reportHistory(['2024-02-01T10:00:00Z'], ['2024-02-02T10:00:00Z']),
-      getCreditReport: (v) => { seen.push(v); return creditReport({ creditCards: [tradeline({ hash: 'e1', balance: '1.00' })] }) },
-    })
+    stubCk(ctx, ck({ getCreditReport: (v) => { seen.push(v); return creditReport({ creditCards: [tradeline({ hash: 'e1', balance: '1.00' })] }) } }))
+    stubVault([])
     const report = await refreshBalances(ctx, NOW)
     expect(seen).toEqual([{ bureau: 2, date: '2024-02-02T10:00:00Z' }])
-    expect(row('cr:equifax:e1')).toBeDefined()
     expect(report.credit_report).toMatchObject({ bureau: 'equifax' })
+    expect(row('cr:equifax:e1')).toBeDefined()
   })
 
   it('reports a credit-report failure without touching linked balances or stored report rows', async () => {
-    upsertCreditReportAccount(ctx.db, {
-      key: 'cr:transunion:kept', institution: 'Kept', type: 'Credit Card', category: 'credit_card',
-      currentBalance: -1, creditLimit: 1, asOf: '2024-01-01',
-    }, 'earlier')
-    stubCk(ctx, { ...happyCk(), getCreditReport: () => ({ errors: [{ message: 'An error occurred.' }] }) })
+    upsertCreditReportAccount(ctx.db, { key: 'cr:transunion:kept', institution: 'Kept', type: 'Credit Card', category: 'credit_card', currentBalance: -1, creditLimit: 1, asOf: '2024-01-01' }, 'earlier')
+    stubCk(ctx, ck({ getCreditReport: () => ({ errors: [{ message: 'An error occurred.' }] }) }))
+    stubVault([vaultConnection('Example Bank', [checking])])
     const report = await refreshBalances(ctx, NOW)
     expect(report.credit_report).toEqual({ ok: false, error: 'getCreditReport failed: An error occurred.' })
     expect(report.linked).toMatchObject({ ok: true })
@@ -247,13 +188,33 @@ describe('refreshBalances', () => {
   })
 
   it('reports a non-Error throw as text', async () => {
-    stubCk(ctx, { ...happyCk(), getCreditReportHistory: () => { throw 'plain string' } })
+    stubCk(ctx, ck({ getCreditReportHistory: () => { throw 'plain string' } }))
+    stubVault([])
+    expect((await refreshBalances(ctx, NOW)).credit_report).toEqual({ ok: false, error: 'plain string' })
+  })
+
+  it('marks the credit-report row that duplicates a linked card as matched', async () => {
+    stubCk(ctx, ck())
+    stubVault([vaultConnection('Example Card Co', [card])])
     const report = await refreshBalances(ctx, NOW)
-    expect(report.credit_report).toEqual({ ok: false, error: 'plain string' })
+    expect(report.matched).toBe(1)
+    expect(row('cr:transunion:card1')!.matched_account_id).toBe(URN('card'))
+    expect(row('cr:transunion:other')!.matched_account_id).toBeNull()
+  })
+
+  it('still matches against stored linked balances when the vault is down this time', async () => {
+    setLinkedBalance(ctx.db, {
+      id: URN('card'), urn: URN('card'), name: 'Rewards Card', provider: 'Example Card Co', last4: '4321', type: 'CREDITCARD',
+      balance: -1100, creditLimit: 10000, availableCredit: 8900, asOf: '2024-02-14T09:00:00Z', syncedAt: 'earlier',
+    })
+    stubCk(ctx, ck({ idxAuth: () => { throw new Error('down') } }))
+    const report = await refreshBalances(ctx, NOW)
+    expect(report.matched).toBe(1)
   })
 
   it('rolls back a source\'s writes if storing them fails part-way', async () => {
-    stubCk(ctx, happyCk())
+    stubCk(ctx, ck())
+    stubVault([])
     const realPrepare = ctx.db.prepare.bind(ctx.db)
     let n = 0
     vi.spyOn(ctx.db, 'prepare').mockImplementation((sql: string) => {
@@ -283,27 +244,18 @@ describe('ck_get_account_balances', () => {
   beforeEach(() => { ctx = { client: new CreditKarmaClient('valid-token'), db: initDb(':memory:') } })
   afterEach(() => vi.restoreAllMocks())
 
+  const linkedRow = (id: string, asOf: string | null) =>
+    setLinkedBalance(ctx.db, {
+      id, urn: `urn:${id}`, name: id, provider: 'Example Bank', last4: null, type: 'SAVINGS',
+      balance: 100, creditLimit: null, availableCredit: null, asOf, syncedAt: '2024-02-15T00:00:00Z',
+    })
+
   const seed = () => {
-    setLinkedBalance(ctx.db, {
-      id: 'Example Bank|1234', name: 'Checking', provider: 'Example Bank', display: 'Example Bank (...1234)',
-      last4: '1234', balance: 100, asOf: '2024-02-10T00:00:00Z', syncedAt: '2024-02-15T00:00:00Z',
-    })
-    setLinkedBalance(ctx.db, {
-      id: 'Old CU|5555', name: 'Old Savings', provider: 'Old CU', display: 'Old CU (...5555)',
-      last4: '5555', balance: 5, asOf: '2024-02-01T00:00:00Z', syncedAt: '2024-02-15T00:00:00Z',
-    })
-    setLinkedBalance(ctx.db, {
-      id: 'Unknown|6666', name: 'No Date', provider: 'Unknown', display: 'Unknown (...6666)',
-      last4: '6666', balance: 1, asOf: null, syncedAt: '2024-02-15T00:00:00Z',
-    })
-    upsertCreditReportAccount(ctx.db, {
-      key: 'cr:transunion:a', institution: 'Example Card Co', type: 'Credit Card', category: 'credit_card',
-      currentBalance: -250, creditLimit: 5000, asOf: '2024-01-20',
-    }, '2024-02-15T00:00:00Z')
-    upsertCreditReportAccount(ctx.db, {
-      key: 'cr:transunion:b', institution: 'Old Lender', type: 'Auto Loan', category: 'auto_loan',
-      currentBalance: -8000, creditLimit: null, asOf: '2023-12-01',
-    }, '2024-02-15T00:00:00Z')
+    linkedRow('Fresh', '2024-02-10T00:00:00Z')
+    linkedRow('Old', '2024-02-01T00:00:00Z')
+    linkedRow('Undated', null)
+    upsertCreditReportAccount(ctx.db, { key: 'cr:transunion:a', institution: 'Example Card Co', type: 'Credit Card', category: 'credit_card', currentBalance: -250, creditLimit: 5000, asOf: '2024-01-20' }, '2024-02-15T00:00:00Z')
+    upsertCreditReportAccount(ctx.db, { key: 'cr:transunion:b', institution: 'Old Lender', type: 'Auto Loan', category: 'auto_loan', currentBalance: -8000, creditLimit: null, asOf: '2023-12-01' }, '2024-02-15T00:00:00Z')
   }
 
   it('reads balances from the DB with a per-source stale flag', async () => {
@@ -311,16 +263,16 @@ describe('ck_get_account_balances', () => {
     const result = await handleGetAccountBalances({}, ctx, NOW)
     expect(result.refresh).toBeUndefined()
     expect(result.accounts.map(a => [a.id, a.stale])).toEqual([
-      ['Example Bank|1234', false],   // linked, 5 days old
-      ['Old CU|5555', true],          // linked, 14 days > 7
-      ['Unknown|6666', true],         // no as-of at all
-      ['cr:transunion:a', false],     // credit report, 26 days < 35
-      ['cr:transunion:b', true],      // credit report, 76 days > 35
+      ['Fresh', false],             // linked, 5 days old
+      ['Old', true],                // linked, 14 days > 7
+      ['Undated', true],            // no as-of at all
+      ['cr:transunion:a', false],   // credit report, 26 days < 35
+      ['cr:transunion:b', true],    // credit report, 76 days > 35
     ])
     expect(result.accounts[3]).toEqual({
       id: 'cr:transunion:a', institution: 'Example Card Co', name: 'Example Card Co', type: 'Credit Card', last4: null,
       current_balance: -250, available_balance: null, credit_limit: 5000,
-      balance_as_of: '2024-01-20', balances_synced_at: '2024-02-15T00:00:00Z', source: 'credit_report', stale: false,
+      balance_as_of: '2024-01-20', balances_synced_at: '2024-02-15T00:00:00Z', source: 'credit_report', matched_to: null, stale: false,
     })
   })
 
@@ -328,11 +280,20 @@ describe('ck_get_account_balances', () => {
     expect(STALE_DAYS).toEqual({ linked: 7, credit_report: 35 })
   })
 
+  it('hides matched credit-report rows unless include_matched', async () => {
+    seed()
+    ctx.db.prepare("UPDATE accounts SET matched_account_id = 'Fresh' WHERE id = 'cr:transunion:a'").run()
+    expect((await handleGetAccountBalances({}, ctx, NOW)).accounts.map(a => a.id)).not.toContain('cr:transunion:a')
+    const all = await handleGetAccountBalances({ include_matched: true }, ctx, NOW)
+    expect(all.accounts.find(a => a.id === 'cr:transunion:a')!.matched_to).toBe('Fresh')
+  })
+
   it('refreshes live first when asked, and reports how that went', async () => {
-    stubCk(ctx, happyCk())
+    stubCk(ctx, ck())
+    stubVault([vaultConnection('Example Card Co', [card])])
     const result = await handleGetAccountBalances({ refresh: true }, ctx, NOW)
-    expect(result.refresh).toMatchObject({ linked: { ok: true }, credit_report: { ok: true } })
-    expect(result.accounts.map(a => a.id)).toContain('cr:transunion:card1')
+    expect(result.refresh).toMatchObject({ linked: { ok: true }, credit_report: { ok: true }, matched: 1 })
+    expect(result.accounts.map(a => a.id)).toEqual([URN('card'), 'cr:transunion:other'])
   })
 
   it('still returns stored balances when the refresh fails', async () => {
@@ -355,12 +316,23 @@ describe('ck_get_account_balances', () => {
     }
   })
 
+  it('keeps a transaction account\'s history when the vault stops returning it', async () => {
+    upsertAccount(ctx.db, { id: 'Gone|1', name: 'g' })
+    upsertTransaction(ctx.db, { id: 't', date: '2024-01-01', description: 'x', status: 'posted', amount: -1, accountId: 'Gone|1', categoryId: null, merchantId: null, rawJson: null })
+    linkedRow('Gone|1', '2024-02-10T00:00:00Z')
+    stubCk(ctx, ck())
+    stubVault([])
+    await handleGetAccountBalances({ refresh: true }, ctx, NOW)
+    expect(ctx.db.prepare("SELECT balance_source FROM accounts WHERE id = 'Gone|1'").get()).toEqual({ balance_source: null })
+  })
+
   it('registers the tool — not read-only, since refresh writes the local DB — and wraps the result', async () => {
     seed()
     const { server, calls } = fakeServer()
     registerBalanceTools(server, ctx)
     expect(calls.map(c => c.name)).toEqual(['ck_get_account_balances'])
     expect(calls[0].opts.inputSchema.shape).toHaveProperty('refresh')
+    expect(calls[0].opts.inputSchema.shape).toHaveProperty('include_matched')
     expect(calls[0].opts.annotations).toEqual({ readOnlyHint: false, idempotentHint: true })
     const body = JSON.parse((await calls[0].handler({})).content[0].text)
     expect(body.accounts).toHaveLength(5)

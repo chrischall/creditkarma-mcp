@@ -2,11 +2,12 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, chmodSync, existsSync } from 'fs'
 import { dirname } from 'path'
 import { deriveAccountId, parseLast4 } from './accountId.js'
-import type { CreditReportAccount } from './balances.js'
+import type { CreditReportAccount } from './creditReport.js'
+import type { BalanceSnapshot } from './matching.js'
 
 export type Database = DatabaseSync
 
-const CURRENT_VERSION = 2
+const CURRENT_VERSION = 3
 
 /**
  * One function per schema version. Each runs inside its own transaction (see
@@ -58,6 +59,12 @@ export const MIGRATIONS: Record<number, (db: Database) => void> = {
     INSERT OR IGNORE INTO schema_version VALUES (1);
   `),
   2: migrateToV2,
+  // v3: a credit-report row that is the same account as a linked one points at
+  // it here, and is hidden from listings (see src/matching.ts).
+  3: (db) => db.exec(`
+    ALTER TABLE accounts ADD COLUMN matched_account_id TEXT;
+    INSERT OR IGNORE INTO schema_version VALUES (3);
+  `),
 }
 
 /**
@@ -278,34 +285,33 @@ export function upsertAccount(db: Database, row: AccountRow): void {
  * merge, then the synthetic id itself.
  */
 export function resolveAccountId(db: Database, derivedId: string, urn?: string | null): string {
-  if (urn) {
-    const byUrn = db.prepare('SELECT id FROM accounts WHERE account_urn = ?').get(urn) as { id: string } | undefined
-    if (byUrn) return byUrn.id
-  }
+  const byUrn = urn ? findAccountByUrn(db, urn) : null
+  if (byUrn) return byUrn
   const alias = db.prepare('SELECT account_id FROM account_aliases WHERE alias = ?').get(derivedId) as { account_id: string } | undefined
   return alias?.account_id ?? derivedId
 }
 
 /**
- * The one existing account a net-worth row belongs to when its synthetic id
- * doesn't match. Those pages show SHORTENED provider names ("Example Bank" or
- * "Example Bank Pe..." for "Example Bank Personal"), so `provider|last4`
- * derives a different id than the transactions did. Match on the same real
- * last4 plus a provider prefix in either direction — and only when exactly one
- * account fits, so an ambiguous row gets its own row rather than a wrong home.
- * Credit-report rows are never candidates.
+ * The URN-less account a vault account belongs to: same institution
+ * (case-insensitive, trimmed) and same real last4, holding no URN yet — its
+ * transactions predate CK sending URNs. Only when exactly one fits; anything
+ * ambiguous gets its own row rather than a wrong home. Credit-report rows are
+ * never candidates.
  */
-export function findAccountByProviderPrefix(db: Database, provider: string, last4: string | null): string | null {
-  const stem = provider.trim().toLowerCase().replace(/(\.\.\.|…)$/, '').trim()
-  if (!last4 || stem === '') return null
-  const candidates = (db.prepare(`
-    SELECT id, provider_name FROM accounts
-    WHERE last4 = ? AND provider_name IS NOT NULL AND balance_source IS NOT 'credit_report'
-  `).all(last4) as Array<{ id: string, provider_name: string }>).filter(a => {
-    const name = a.provider_name.toLowerCase()
-    return name.startsWith(stem) || stem.startsWith(name)
-  })
-  return candidates.length === 1 ? candidates[0].id : null
+export function findUnlinkedAccount(db: Database, provider: string, last4: string | null): string | null {
+  if (!last4) return null
+  const rows = db.prepare(`
+    SELECT id FROM accounts
+    WHERE last4 = ? AND LOWER(TRIM(provider_name)) = ? AND account_urn IS NULL
+      AND balance_source IS NOT 'credit_report'
+  `).all(last4, provider.trim().toLowerCase()) as Array<{ id: string }>
+  return rows.length === 1 ? rows[0].id : null
+}
+
+/** The account holding `urn`, if any. */
+export function findAccountByUrn(db: Database, urn: string): string | null {
+  const row = db.prepare('SELECT id FROM accounts WHERE account_urn = ?').get(urn) as { id: string } | undefined
+  return row?.id ?? null
 }
 
 /** Record `urn` on an account that has none, unless another row already holds it. */
@@ -350,48 +356,83 @@ export function pruneCreditReportAccounts(db: Database, keep: string[]): number 
   return Number(result.changes)
 }
 
-/**
- * Remove a linked-balance row that turned out to be a stale duplicate record.
- * Only a row that exists purely for its balance goes: one with transactions,
- * or from any other source, is left alone. Returns whether a row was removed.
- */
-export function deleteStaleLinkedRow(db: Database, id: string): boolean {
-  const result = db.prepare(`
-    DELETE FROM accounts
-    WHERE id = ? AND balance_source = 'linked'
-      AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.account_id = accounts.id)
-  `).run(id)
-  return Number(result.changes) > 0
-}
-
 export interface LinkedBalanceRow {
   id: string
+  urn: string
   name: string
   provider: string
-  display: string
   last4: string | null
+  type: string
+  /** Liabilities negative. */
   balance: number
+  creditLimit: number | null
+  availableCredit: number | null
   asOf: string | null
   syncedAt: string
 }
 
 /**
- * Record a linked account's balance. An existing row keeps its name and
- * display (those come from transactions); a new one is created from CK's
- * net-worth row.
+ * Record a linked account's balance from the Intuit vault. An existing row
+ * keeps its name and display (those come from transactions) and only gains
+ * metadata it lacks; a new one is created from the vault's. The URN is
+ * attached unless another row already holds it.
  */
 export function setLinkedBalance(db: Database, b: LinkedBalanceRow): void {
   db.prepare(`
     INSERT INTO accounts (id, name, type, provider_name, display, last4, current_balance, available_balance,
                           credit_limit, balance_as_of, balances_synced_at, balance_source)
-    VALUES (?, ?, NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, 'linked')
+    VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'linked')
     ON CONFLICT(id) DO UPDATE SET
+      type = COALESCE(accounts.type, excluded.type),
+      provider_name = COALESCE(accounts.provider_name, excluded.provider_name),
       last4 = COALESCE(accounts.last4, excluded.last4),
       current_balance = excluded.current_balance,
+      available_balance = excluded.available_balance,
+      credit_limit = excluded.credit_limit,
       balance_as_of = excluded.balance_as_of,
       balances_synced_at = excluded.balances_synced_at,
       balance_source = excluded.balance_source
-  `).run(b.id, b.name, b.provider, b.display, b.last4, b.balance, b.asOf, b.syncedAt)
+  `).run(b.id, b.name, b.type, b.provider, b.last4, b.balance, b.availableCredit, b.creditLimit, b.asOf, b.syncedAt)
+  attachUrn(db, b.id, b.urn)
+}
+
+/**
+ * Retire linked balances the latest vault refresh did not return (closed, or
+ * no longer linked). A balance-only row is deleted; one with transactions
+ * keeps its history and just stops being listed as a balance. Returns how
+ * many rows were retired.
+ */
+export function pruneLinkedAccounts(db: Database, keep: string[]): number {
+  const notKept = keep.length > 0 ? `AND id NOT IN (${keep.map(() => '?').join(', ')})` : ''
+  const hasTx = 'EXISTS (SELECT 1 FROM transactions t WHERE t.account_id = accounts.id)'
+  const deleted = db.prepare(`DELETE FROM accounts WHERE balance_source = 'linked' ${notKept} AND NOT ${hasTx}`).run(...keep)
+  const unlisted = db.prepare(`
+    UPDATE accounts SET balance_source = NULL, current_balance = NULL, available_balance = NULL,
+                        credit_limit = NULL, balance_as_of = NULL, balances_synced_at = NULL
+    WHERE balance_source = 'linked' ${notKept}
+  `).run(...keep)
+  return Number(deleted.changes) + Number(unlisted.changes)
+}
+
+/** Both sides of credit-report matching, as {@link matchCreditReportAccounts} takes them. */
+export function loadMatchSnapshots(db: Database): { creditReport: BalanceSnapshot[]; linked: BalanceSnapshot[] } {
+  const load = (where: string) => db.prepare(`
+    SELECT id, provider_name AS institution, credit_limit AS creditLimit, current_balance AS balance,
+           balance_as_of AS asOf
+    FROM accounts WHERE ${where}
+  `).all() as unknown as BalanceSnapshot[]
+  return {
+    creditReport: load("balance_source = 'credit_report'"),
+    // Only liabilities can be the same account as a credit-report tradeline.
+    linked: load("balance_source = 'linked' AND current_balance < 0"),
+  }
+}
+
+/** Replace every credit-report row's match with `matches` (credit-report id → linked id). */
+export function setCreditReportMatches(db: Database, matches: Map<string, string>): void {
+  db.prepare("UPDATE accounts SET matched_account_id = NULL WHERE balance_source = 'credit_report'").run()
+  const set = db.prepare('UPDATE accounts SET matched_account_id = ? WHERE id = ?')
+  for (const [crId, linkedId] of matches) set.run(linkedId, crId)
 }
 
 export interface BalanceListRow {
@@ -406,14 +447,21 @@ export interface BalanceListRow {
   balance_as_of: string | null
   balances_synced_at: string | null
   balance_source: 'linked' | 'credit_report'
+  /** For a credit-report row: the linked account it duplicates. */
+  matched_to: string | null
 }
 
-export function listBalances(db: Database): BalanceListRow[] {
+/**
+ * Accounts with a balance, linked first. A credit-report row matched to a
+ * linked account is the same account seen weeks earlier, so it is hidden
+ * unless `includeMatched`.
+ */
+export function listBalances(db: Database, opts: { includeMatched?: boolean } = {}): BalanceListRow[] {
   return db.prepare(`
     SELECT id, name, provider_name AS institution, type, last4, current_balance, available_balance,
-           credit_limit, balance_as_of, balances_synced_at, balance_source
+           credit_limit, balance_as_of, balances_synced_at, balance_source, matched_account_id AS matched_to
     FROM accounts
-    WHERE balance_source IS NOT NULL
+    WHERE balance_source IS NOT NULL ${opts.includeMatched ? '' : 'AND matched_account_id IS NULL'}
     ORDER BY balance_source DESC, provider_name, name
   `).all() as unknown as BalanceListRow[]
 }

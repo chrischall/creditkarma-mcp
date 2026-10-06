@@ -17,9 +17,9 @@ describe('initDb', () => {
     db = initDb(':memory:')
   })
 
-  it('creates schema_version table at the current version (2)', () => {
+  it('creates schema_version table at the current version (3)', () => {
     const row = db.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }
-    expect(row.version).toBe(2)
+    expect(row.version).toBe(3)
   })
 
   it('creates transactions table', () => {
@@ -91,7 +91,7 @@ describe('initDb — file-based tests', () => {
     db1.close()
     const db2 = initDb(dbPath)
     const row = db2.prepare('SELECT COUNT(*) as n FROM schema_version').get() as { n: number }
-    expect(row.n).toBe(2)
+    expect(row.n).toBe(3)
     db2.close()
   })
 
@@ -104,7 +104,7 @@ describe('initDb — file-based tests', () => {
     // initDb should detect version=0 (from ??) and run all migrations
     const db = initDb(dbPath)
     const row = db.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }
-    expect(row.version).toBe(2)
+    expect(row.version).toBe(3)
     db.close()
   })
 
@@ -112,7 +112,7 @@ describe('initDb — file-based tests', () => {
     const nestedPath = join(tmpDir, 'sub', 'transactions.db')
     const db = initDb(nestedPath)
     const row = db.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }
-    expect(row.version).toBe(2)
+    expect(row.version).toBe(3)
     db.close()
   })
 })
@@ -178,14 +178,14 @@ describe('initDb — file permissions hardening', () => {
 })
 
 describe('upsertAccount', () => {
-  let db: Database.Database
+  let db: DatabaseSync
 
   beforeEach(() => { db = initDb(':memory:') })
 
   it('inserts a new account', () => {
     const account: AccountRow = { id: 'a1', name: 'Chase Checking', type: 'checking', providerName: 'Chase', display: 'Chase ...1234' }
     upsertAccount(db, account)
-    const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get('a1') as AccountRow & { provider_name: string }
+    const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get('a1') as unknown as AccountRow & { provider_name: string }
     expect(row.name).toBe('Chase Checking')
     expect(row.provider_name).toBe('Chase')
   })
@@ -206,12 +206,12 @@ describe('upsertAccount', () => {
 })
 
 describe('upsertCategory', () => {
-  let db: Database.Database
+  let db: DatabaseSync
   beforeEach(() => { db = initDb(':memory:') })
 
   it('inserts a category', () => {
     upsertCategory(db, { id: 'c1', name: 'Food & Dining', type: 'expense' })
-    const row = db.prepare('SELECT * FROM categories WHERE id = ?').get('c1') as CategoryRow
+    const row = db.prepare('SELECT * FROM categories WHERE id = ?').get('c1') as unknown as CategoryRow
     expect(row.name).toBe('Food & Dining')
   })
 
@@ -224,7 +224,7 @@ describe('upsertCategory', () => {
 })
 
 describe('upsertMerchant', () => {
-  let db: Database.Database
+  let db: DatabaseSync
   beforeEach(() => { db = initDb(':memory:') })
 
   it('inserts a merchant', () => {
@@ -242,7 +242,7 @@ describe('upsertMerchant', () => {
 })
 
 describe('upsertTransaction', () => {
-  let db: Database.Database
+  let db: DatabaseSync
   beforeEach(() => {
     db = initDb(':memory:')
     upsertAccount(db, { id: 'a1', name: 'Chase' })
@@ -283,7 +283,7 @@ describe('upsertTransaction', () => {
 })
 
 describe('sync state', () => {
-  let db: Database.Database
+  let db: DatabaseSync
   beforeEach(() => { db = initDb(':memory:') })
 
   it('returns null for missing key', () => {
@@ -310,7 +310,7 @@ describe('sync state', () => {
 })
 
 describe('backfillAccountIds', () => {
-  let db: Database.Database
+  let db: DatabaseSync
   beforeEach(() => { db = initDb(':memory:') })
 
   const seedBrokenTx = (id: string, account: { name: string, type?: string, providerName?: string, accountTypeAndNumberDisplay?: string }, txAcctId = '') => {

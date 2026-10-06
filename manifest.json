@@ -88,7 +88,7 @@
     },
     {
       "name": "ck_get_account_balances",
-      "description": "Current balance, credit limit and as-of time of every account (linked accounts and credit-report cards/loans), with a stale flag; refresh:true fetches live first"
+      "description": "Current balance of every account — linked bank, card, loan and investment accounts live, plus credit-report cards and loans — with credit limit, available credit, as-of time and a stale flag; refresh:true fetches live first"
     },
     {
       "name": "ck_query_sql",

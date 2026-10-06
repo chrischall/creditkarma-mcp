@@ -476,7 +476,8 @@ describe('resolveAuth', () => {
       const { FetchproxyCapabilityUnavailableError } = await import('@fetchproxy/server')
       const unavailable = new FetchproxyCapabilityUnavailableError(
         'capability "read_cookies" is not available in this browser',
-        { capability: 'read_cookies' },
+        // Older @fetchproxy/server builds omitted `platform`; the cast reproduces that payload.
+        { capability: 'read_cookies' } as { capability: string; platform: string | null },
       )
       expect(unavailable.platform).toBeUndefined()
       bootstrapMock.mockRejectedValue(unavailable)

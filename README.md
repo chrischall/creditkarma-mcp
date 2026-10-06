@@ -156,7 +156,7 @@ The server extracts the access and refresh JWTs from the `CKAT` cookie inside th
 | `ck_set_session` | Store credentials from your browser Cookie header (auto-extracts JWTs from the CKAT cookie) |
 | `ck_forget_session` | Delete the saved-session file and clear in-memory credentials (local only; synced transactions are kept) |
 | `ck_sync_transactions` | Sync transactions into the local SQLite database, then refresh account balances |
-| `ck_get_account_balances` | Balance of every account: institution, type, last 4, current balance, credit limit, as-of time and a `stale` flag. `refresh: true` fetches live first |
+| `ck_get_account_balances` | Balance of every account: institution, type, last 4, current balance, available credit and credit limit (cards), as-of time and a `stale` flag. `refresh: true` fetches live first; `include_matched: true` also lists credit-report rows that duplicate a linked account |
 | `ck_list_transactions` | List transactions with filters (date, account, category, merchant, amount) |
 | `ck_get_recent_transactions` | Fetch the N most recent transactions |
 | `ck_get_spending_by_category` | Spending totals grouped by category |
@@ -172,10 +172,10 @@ Transactions are synced from Credit Karma's GraphQL API into a local SQLite data
 
 **Account balances**: each sync also refreshes balances once, from two sources (a failure in either is reported in the result's `balances`, never thrown, and the transactions still sync):
 
-- **Linked accounts** (bank, investment) come from Credit Karma's net-worth pages and are matched to your transaction accounts by institution + last 4. The as-of time is the institution connection's last refresh.
-- **Credit cards and loans** come from your credit report (TransUnion by default; set `CK_CREDIT_BUREAU=equifax` to switch). These are as of the bureau's last report, usually 2–5 weeks old; they include credit limits but no last 4. Closed accounts are dropped.
+- **Linked accounts** — every type, including credit cards and loans — come from the account aggregator behind Credit Karma's *Manage accounts* page (Intuit's account vault, reached with a token Credit Karma issues). Each account is matched to your transaction account by its account id, and its as-of time is that account's own last refresh. Card rows include the credit limit; available credit is calculated as limit minus balance.
+- **Credit cards and loans** also come from your credit report (TransUnion by default; set `CK_CREDIT_BUREAU=equifax` to switch). These are as of the bureau's last report, usually 2–5 weeks old, with credit limits but no last 4. Closed accounts are dropped. When a credit-report account is clearly the same as a linked one (same lender, same credit limit, similar balance, the linked balance is at least as recent — and no other account fits), it is hidden as a duplicate; pass `include_matched: true` to see it. Doubtful pairs are never hidden.
 
-Balances follow the transaction sign convention: assets are positive, money owed (card balances, loans) is **negative**; `credit_limit` is positive. Credit Karma does not expose an available balance, so `available_balance` is always null. `stale` is true when `balance_as_of` is more than 7 days old for linked accounts, or 35 days for credit-report accounts.
+Balances follow the transaction sign convention: assets are positive, money owed (card balances, loans) is **negative**; `credit_limit` and `available_balance` are positive. `stale` is true when `balance_as_of` is more than 7 days old for linked accounts, or 35 days for credit-report accounts.
 
 **Auto-refresh**: if the access token has expired, the server automatically refreshes it before syncing. If the refresh token has also expired, it throws an error asking you to re-authenticate.
 
@@ -185,7 +185,7 @@ Balances follow the transaction sign convention: assets are positive, money owed
 transactions (id, date, description, status, amount, account_id, category_id, merchant_id, raw_json)
 accounts     (id, name, type, provider_name, display, last4, account_urn,
               current_balance, available_balance, credit_limit,
-              balance_as_of, balances_synced_at, balance_source)
+              balance_as_of, balances_synced_at, balance_source, matched_account_id)
 account_aliases (alias, account_id)
 categories   (id, name, type)
 merchants    (id, name)
@@ -255,11 +255,14 @@ Changes land via PR, including for solo work — release notes are generated fro
 ```
 src/
   auth.ts               resolveAuth() — three-path priority (CK_COOKIES env / ck_set_session cache / fetchproxy), plus loadAuthIntoClient()
-  client.ts             Credit Karma GraphQL client (auto-refresh, JWT helpers, cookie parser)
+  client.ts             Credit Karma GraphQL client (auto-refresh, JWT helpers, cookie parser, balance operations)
   index.ts              MCP server entry point; bootstraps tokens from the saved session / CK_COOKIES
   db.ts                 SQLite schema, migrations, and upsert helpers
-  balances.ts           Parsers for the balance responses (credit report + net-worth pages)
-  transaction.graphql   Documents the transactions selection set (sent as a persisted-query hash, not this text)
+  vault.ts              Linked-account balances from Intuit's account vault
+  creditReport.ts       Credit-report balances (cards and loans, weeks old)
+  matching.ts           Pairs credit-report accounts with the linked accounts they duplicate
+  json.ts               Small helpers for reading untyped API JSON
+  transaction.graphql   Documents the transaction fields we read (sent as a persisted-query hash, not this text)
   tools/
     auth.ts             ck_set_session — refuses stale refresh tokens, saves ~/.creditkarma-mcp/session at 0600;
                         ck_forget_session — deletes it and clears in-memory credentials

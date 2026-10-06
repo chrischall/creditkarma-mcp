@@ -1,107 +1,6 @@
 // Synthetic fixtures shaped like Credit Karma's balance responses. Every name,
 // amount, date and hash here is invented — none comes from a real account.
 
-const span = (text: string) => ({ text, format: null, style: null, styles: null, __typename: 'Span' })
-const formatted = (...texts: string[]) => ({ spans: texts.map(span), __typename: 'FormattedText' })
-
-/** A cash-page account row, laid out as captured 2026-10-06 (values invented):
- *  `cards[].item.views[]` holding rowTitle (name), rowValue (balance) and
- *  rowStatusDot.statusDotText ("Provider (...1234)\n<age> ago"). */
-export function linkedRow(name: string, balance: string, providerLine: string) {
-  return {
-    item: {
-      views: [{
-        rowTitle: formatted(name),
-        rowValue: formatted(balance),
-        rowStatusDot: { statusDotText: formatted(providerLine), __typename: 'KPLStatusDotView' },
-        __typename: 'KPLRowView',
-      }],
-      __typename: 'KPLViewGroup',
-    },
-    __typename: 'FabricCardAny',
-  }
-}
-
-/** The "needs attention" variant: the provider line moves into rowTitle, ahead
- *  of the balance, and the status dot carries the warning instead. */
-export function attentionRow(name: string, providerLine: string, balance: string, status: string) {
-  return {
-    item: {
-      views: [{
-        rowOverline: formatted(`${name}\n`),
-        rowTitle: formatted(providerLine),
-        rowValue: formatted(balance),
-        rowStatusDot: { statusDotText: formatted(status), __typename: 'KPLStatusDotView' },
-        __typename: 'KPLRowView',
-      }],
-      __typename: 'KPLViewGroup',
-    },
-    __typename: 'FabricCardAny',
-  }
-}
-
-/** An investments-page row: nested one level deeper under `lookalikeViews`,
- *  with a truncated provider name ("Example Brokerage - Ind...") and a
- *  "▼ $1,234 (1.2%)" change figure beside the balance. */
-export function investmentRow(name: string, balance: string, providerLine: string, change: string) {
-  return {
-    item: {
-      views: [{
-        lookalikeViews: [{
-          rowTitle: formatted(name),
-          rowValue: formatted(balance),
-          rowStatusDot: { statusDotText: formatted(providerLine), __typename: 'KPLStatusDotView' },
-          rowChange: formatted(change),
-          rowCaption: formatted('last 30 days'),
-          __typename: 'KPLRowView',
-        }],
-      }],
-      __typename: 'KPLViewGroup',
-    },
-    __typename: 'FabricCardAny',
-  }
-}
-
-export function promoCard(text: string) {
-  return { item: { views: [{ paragraphText: formatted(text) }] }, __typename: 'FabricCardAny' }
-}
-
-export function headerCard(title: string, total: string) {
-  return { item: { header: { title: formatted(title), total: formatted(total) } }, __typename: 'FabricCardAny' }
-}
-
-export function l2Page(cards: unknown[]) {
-  return {
-    data: {
-      prime: {
-        networthByAccountType: {
-          __typename: 'Prime_NetworthByAccountTypeLayout',
-          impressionEvent: { __typename: 'ImpressionEvent', trackingPayload: 'x' },
-          cards,
-        },
-      },
-    },
-  }
-}
-
-export function idxConnections(connections: Array<{ providerName: string; lastRefreshTimeStamp: string | null }>) {
-  return {
-    data: {
-      prime: {
-        idxConnections: {
-          __typename: 'Prime_IdxConnections',
-          connections: connections.map((c, i) => ({
-            __typename: 'Prime_IdxConnection',
-            connectionId: `conn-${i}`,
-            lastRefreshTimeStamp: c.lastRefreshTimeStamp,
-            providerMetadata: { providerName: c.providerName, providerId: `p${i}`, providerLogos: [] },
-          })),
-        },
-      },
-    },
-  }
-}
-
 export function reportHistory(transunion: string[], equifax: string[] = []) {
   return {
     data: {
@@ -159,4 +58,58 @@ export function creditReport(tradelines: Partial<Record<
       },
     },
   }
+}
+
+// ---------------------------------------------------------------------------
+// Intuit vault (`POST vault.api.intuit.com/v2/search/connections`) — the API
+// behind Credit Karma's "Manage accounts" widget. Shape as captured
+// 2026-10-06; every value here is invented.
+// ---------------------------------------------------------------------------
+
+export interface VaultAccountOpts {
+  urn: string
+  masked?: string
+  nickName?: string
+  accountType?: string
+  accountCategory?: string
+  status?: string
+  balance?: string
+  creditMaximumAmount?: number
+  refreshedAt?: string
+}
+
+export function vaultAccount(o: VaultAccountOpts) {
+  return {
+    accountId: o.urn,
+    accountNumberMasked: o.masked ?? 'XXXX1234',
+    currencyCode: 'USD',
+    nickName: o.nickName ?? 'Everyday Checking',
+    statusCode: '0',
+    accountType: o.accountType ?? 'CHECKING',
+    accountCategory: o.accountCategory ?? 'DEPOSIT',
+    status: o.status ?? 'OPEN',
+    lastSuccessfulRefreshTime: o.refreshedAt ?? '2024-02-15T09:00:00Z',
+    currentBalance: o.balance ?? '100.00',
+    ...(o.creditMaximumAmount !== undefined ? { creditMaximumAmount: o.creditMaximumAmount } : {}),
+    statusDetail: [],
+  }
+}
+
+export function vaultConnection(name: string, accounts: ReturnType<typeof vaultAccount>[], lastSuccessTime = '2024-02-15T08:00:00Z') {
+  return {
+    providerId: `provider-${name}`,
+    name,
+    connectionId: `conn-${name}`,
+    type: 'OAuth',
+    lastSuccessTime,
+    statusDetail: [],
+    configurations: [{ key: 'irrelevant', value: 'x' }],
+    accounts,
+  }
+}
+
+export function idxAuthResponse(token: string | null, message?: string) {
+  return token
+    ? { data: { prime: { idxAuth: { __typename: 'Prime_IdxAuth', token } } } }
+    : { data: { prime: { idxAuth: { __typename: 'Prime_ServerError', message: message ?? 'User not on trusted device' } } } }
 }

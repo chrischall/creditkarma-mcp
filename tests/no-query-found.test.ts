@@ -261,7 +261,7 @@ describe('fetchPage — "No query found" handling', () => {
     // Telling the user to re-authenticate or retry sends them nowhere.
     vi.spyOn(global, 'fetch').mockImplementation(async () => noQueryFound())
 
-    const err = await client.fetchPage().catch((e: Error) => e)
+    const err: Error = await client.fetchPage().catch(e => e)
 
     expect(err.message).toMatch(/persisted/i)
     expect(err.message).toMatch(/usePregeneratedHashes/)

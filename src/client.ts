@@ -94,27 +94,27 @@ export interface OperationSpec {
 /** `credit-health` bundle version the credit-report hashes came from. */
 export const CREDIT_HEALTH_CLIENT_VERSION = '1.2.1'
 
+/** `idx-gateway` bundle version the idxAuth hash came from. */
+export const IDX_GATEWAY_CLIENT_VERSION = '3.0.62'
+
 /**
- * Balance operations. Hashes read 2026-10-06 from the manifests of `prime_web`
- * 2.0.35 and `credit-health` 1.2.1; {@link CreditKarmaClient.runOperation}
- * re-reads them in-process if CK rotates them.
+ * Balance operations. Hashes read 2026-10-06 from the manifests of
+ * `idx-gateway` 3.0.62 and `credit-health` 1.2.1;
+ * {@link CreditKarmaClient.runOperation} re-reads them in-process if CK
+ * rotates them.
  */
 export const OPERATIONS = {
-  /** Net-worth page for one account type ("cash", "investments", …): server-driven UI. */
-  getAccountL2Page: {
-    operationName: 'getAccountL2Page',
-    hash: 'ae3d3cc725b67ede7ec9216518daf4c06695c583301d6749881a1a55a9c061f2',
-    clientName: CK_CLIENT_NAME,
-    clientVersion: CK_CLIENT_VERSION,
-    source: queryHash.PRIME_WEB_SOURCE,
-  },
-  /** Per-institution connections with their exact last refresh time. */
-  idxConnections: {
-    operationName: 'idxConnections',
-    hash: 'b15bb6b455264783f9c130ddf6a646ba2caf25355937dc18a54833f8aa54d33c',
-    clientName: CK_CLIENT_NAME,
-    clientVersion: CK_CLIENT_VERSION,
-    source: queryHash.PRIME_WEB_SOURCE,
+  /**
+   * A token for Intuit's account vault (`src/vault.ts`) — what CK's
+   * Manage-accounts widget authenticates with. Variables
+   * `{source: "NETWORTH", origin: "MANAGE_ACCOUNTS"}`.
+   */
+  idxAuth: {
+    operationName: 'idxAuth',
+    hash: '82143ec3a9fc794592c6ace8a28f76f2bf8d4f1ea5ee04e1cf7cf9d1407b7f1f',
+    clientName: 'idx-gateway',
+    clientVersion: IDX_GATEWAY_CLIENT_VERSION,
+    source: queryHash.IDX_GATEWAY_SOURCE,
   },
   /** Report pull dates per bureau — `getCreditReport` needs one of them exactly. */
   getCreditReportHistory: {
@@ -745,22 +745,16 @@ async function readBodyOrEmpty(res: Response): Promise<string> {
 }
 
 /**
- * Credit Karma's GraphQL gateway intermittently rejects well-formed requests
- * with `HTTP 400 {"message":"No query found"}`.
- *
- * Measured 2026-08-01 against a live account, this is NOT about the request:
- * a 25-byte `query Ping { __typename }` fails at the same rate as the 98KB
- * transaction query, ad-hoc queries execute fine (so the gateway is not
- * persisted-query-only, despite the APQ-flavoured wording), and neither the
- * `ck-*` client headers, session/Akamai cookies, nor request pacing moved the
- * needle. Successes and failures both reach the origin with identical headers
- * apart from `connection: close` on the failure. From the client's side it is
- * simply non-deterministic, so the only available mitigation is to retry.
+ * The gateway's answer when it cannot resolve a request against its
+ * persisted-operation safelist: `HTTP 400 {"message":"No query found"}`.
+ * Either the `ck-client-name`/`ck-client-version` pair is missing or wrong for
+ * the app the hash belongs to, or the hash has rotated. Never a flake, never
+ * retried as-is — the only recovery is re-reading the hash (src/queryHash.ts).
+ * (It was long documented as a ~44% upstream flake; that measurement sent
+ * `ck-client-name: web`, the wrong value — see CLAUDE.md.)
  *
  * Matched narrowly — status AND the exact `message` value — so a genuine 400
- * (syntax error, schema drift) is never silently retried. The regex requires
- * the phrase to be the `message` field's value rather than incidental text
- * elsewhere in some other payload.
+ * (syntax error, schema drift) is never mistaken for it.
  */
 export function isNoQueryFound(status: number, body: string): boolean {
   return status === 400 && /"message"\s*:\s*"No query found"/.test(body)

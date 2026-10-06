@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.3.0](https://github.com/chrischall/creditkarma-mcp/compare/v3.2.0...v3.3.0) (2026-10-06)
+
+
+### Features
+
+* **balances:** live linked card and loan balances, with credit-report duplicates hidden ([#233](https://github.com/chrischall/creditkarma-mcp/issues/233)) ([c515e60](https://github.com/chrischall/creditkarma-mcp/commit/c515e6026c16c6c2957339867b0981287059c112))
+
+
+### Bug Fixes
+
+* **balances:** keep the last known balance when the vault returns it blank ([#235](https://github.com/chrischall/creditkarma-mcp/issues/235)) ([8ef1efc](https://github.com/chrischall/creditkarma-mcp/commit/8ef1efcc54f13e62794f78d05169280a9f47c747))
+* **balances:** skip Credit Karma's stale duplicate account records ([#232](https://github.com/chrischall/creditkarma-mcp/issues/232)) ([77f5caa](https://github.com/chrischall/creditkarma-mcp/commit/77f5caa89ed54673faa91fcf1c1fc8ca0958d485))
+* **deps:** bump source-map-js from 1.2.1 to 1.2.2 in the security group across 1 directory ([#229](https://github.com/chrischall/creditkarma-mcp/issues/229)) ([ce9ea76](https://github.com/chrischall/creditkarma-mcp/commit/ce9ea764e37bd297f40e6838a0b0117167c3d33d))
+* **deps:** require @chrischall/mcp-utils 2.15.0 ([#231](https://github.com/chrischall/creditkarma-mcp/issues/231)) ([6ea5838](https://github.com/chrischall/creditkarma-mcp/commit/6ea5838f44d305a015cdb42b7808adc5d689d50a))
+
 ## [3.2.0](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.6...v3.2.0) (2026-10-06)
 
 

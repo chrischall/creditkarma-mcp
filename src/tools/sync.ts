@@ -54,8 +54,10 @@ export interface SyncResult {
    * Account balances, refreshed once per run after the transaction pages.
    * Each source reports `ok:false` with the error instead of throwing, so a
    * balance outage never costs the transactions this call already banked.
+   * Absent on a call that paused with more to fetch (`another_run_needed`):
+   * the run that completes the sync refreshes them.
    */
-  balances: BalanceRefreshReport
+  balances?: BalanceRefreshReport
 }
 
 /** Hard ceiling on pages fetched in a single sync. CK pages are ~50–100 txns,
@@ -308,14 +310,16 @@ export async function handleSyncTransactions(
   const anotherRunNeeded = stopped === 'max_pages' || stopped === 'page_cap'
   const note = anotherRunNeeded
     ? `Synced ${totalCount} transaction(s) over ${pageCount} page(s) and paused with more to fetch. ` +
-      'Run ck_sync_transactions again to continue from where this left off.'
+      'Run ck_sync_transactions again to continue from where this left off. Balances refresh once the sync completes.'
     : stopped === 'cursor_stuck'
       ? `Synced ${totalCount} transaction(s), then stopped: Credit Karma kept reporting more pages without advancing its cursor. ` +
         'This is a fault on their side, not a pause — the resume point is saved, but running the tool again ' +
         'right now replays the same page. Try again later.'
       : `Sync complete — ${totalCount} transaction(s) over ${pageCount} page(s); the local database is up to date.`
 
-  const balances = await refreshBalances(ctx)
+  // A paused call is one step of a bounded walk that must answer inside a
+  // hosted client's timeout, so the balance calls wait for the step that ends it.
+  const balances = anotherRunNeeded ? undefined : await refreshBalances(ctx)
 
   return {
     new: newCount,
@@ -325,7 +329,7 @@ export async function handleSyncTransactions(
     another_run_needed: anotherRunNeeded,
     note,
     ...(stopped ? { stopped } : {}),
-    balances,
+    ...(balances ? { balances } : {}),
   }
 }
 
@@ -412,7 +416,7 @@ export function registerSyncTools(server: McpServer, ctx: AppContext): void {
       description:
         'Sync Credit Karma transactions into the local SQLite database, then refresh account ' +
         'balances once (see ck_get_account_balances; a balance failure is reported in `balances`, ' +
-        'never thrown). ' +
+        'never thrown; a call that pauses with more to fetch leaves balances to the call that finishes). ' +
         'Incremental by default (fetches since last sync + 30-day overlap for updates). ' +
         'If no valid token, initiates the login/MFA flow automatically. ' +
         'Bounded and resumable: when it pauses with more to fetch it returns ' +

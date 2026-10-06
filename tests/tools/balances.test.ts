@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   refreshBalances, handleGetAccountBalances, registerBalanceTools, bureauFromEnv,
-  STALE_DAYS,
+  STALE_DAYS, LINKED_ACCOUNT_TYPES,
 } from '../../src/tools/balances.js'
 import { CreditKarmaClient, type OperationSpec } from '../../src/client.js'
 import { initDb, upsertAccount, upsertCreditReportAccount, setLinkedBalance } from '../../src/db.js'
@@ -73,6 +73,24 @@ describe('refreshBalances', () => {
       name: 'Checking', current_balance: 1234.56, balance_as_of: '2024-02-15T09:00:00Z',
       balances_synced_at: NOW.toISOString(), balance_source: 'linked',
     })
+  })
+
+  it('lands on the existing transaction account when the page shows a shortened provider name', async () => {
+    upsertAccount(ctx.db, { id: 'Example Bank Personal|1234', name: 'Checking', providerName: 'Example Bank Personal', display: 'Bank (..1234)' })
+    stubCk(ctx, happyCk())
+    await refreshBalances(ctx, NOW)
+    expect(row('Example Bank Personal|1234')!.current_balance).toBe(1234.56)
+    expect(row('Example Bank|1234')).toBeUndefined()
+  })
+
+  it('does not fetch the net-worth loans page — loans come from the credit report', async () => {
+    const ops = stubCk(ctx, happyCk())
+    await refreshBalances(ctx, NOW)
+    expect(LINKED_ACCOUNT_TYPES).toEqual(['cash', 'investments', 'property'])
+    const types = ops.mock.calls
+      .filter(([op]) => op.operationName === 'getAccountL2Page')
+      .map(([, v]) => (v.input as { accountType: string }).accountType)
+    expect(types).toEqual(['cash', 'investments', 'property'])
   })
 
   it('creates a row for a linked account with no transactions, timing it from the relative age when no connection matches', async () => {

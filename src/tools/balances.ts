@@ -4,7 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import { OPERATIONS } from '../client.js'
 import {
-  resolveAccountId, setLinkedBalance, upsertCreditReportAccount, pruneCreditReportAccounts, listBalances,
+  resolveAccountId, findAccountByProviderPrefix, setLinkedBalance, upsertCreditReportAccount, pruneCreditReportAccounts, listBalances,
   type LinkedBalanceRow, type Database,
 } from '../db.js'
 import { deriveAccountId } from '../accountId.js'
@@ -14,8 +14,13 @@ import {
 } from '../balances.js'
 import { ensureAuthenticated } from './sync.js'
 
-/** Net-worth account types fetched for linked balances. */
-export const LINKED_ACCOUNT_TYPES = ['cash', 'investments', 'property', 'loans'] as const
+/**
+ * Net-worth account types fetched for linked balances. Not `loans`: the credit
+ * report already covers them with typed, signed amounts, and the net-worth
+ * page's sign for a debt is unverified — fetching both could list one loan
+ * twice, once with the wrong sign.
+ */
+export const LINKED_ACCOUNT_TYPES = ['cash', 'investments', 'property'] as const
 
 /**
  * Days after `balance_as_of` that a balance counts as stale, per source.
@@ -75,8 +80,10 @@ async function refreshLinked(ctx: AppContext, now: Date, syncedAt: string) {
     unparsed += page.unparsed
     for (const r of page.rows) {
       const derived = deriveAccountId({ providerName: r.provider, accountTypeAndNumberDisplay: r.display })
+      const resolved = resolveAccountId(ctx.db, derived)
+      const exists = ctx.db.prepare('SELECT 1 FROM accounts WHERE id = ?').get(resolved) !== undefined
       rows.push({
-        id: resolveAccountId(ctx.db, derived),
+        id: exists ? resolved : (findAccountByProviderPrefix(ctx.db, r.provider, r.last4) ?? resolved),
         name: r.name,
         provider: r.provider,
         display: r.display,

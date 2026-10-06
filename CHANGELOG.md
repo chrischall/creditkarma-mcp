@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.2.0](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.6...v3.2.0) (2026-10-06)
+
+
+### Features
+
+* account balances (ck_get_account_balances) and account-identity cleanup ([#224](https://github.com/chrischall/creditkarma-mcp/issues/224)) ([f6fe275](https://github.com/chrischall/creditkarma-mcp/commit/f6fe2755ffd12896c69ff87c717f3b9a71afdd02))
+
+
+### Bug Fixes
+
+* **balances:** match linked rows to existing accounts by last 4 and provider prefix ([#227](https://github.com/chrischall/creditkarma-mcp/issues/227)) ([3a11c71](https://github.com/chrischall/creditkarma-mcp/commit/3a11c71f4dcb5b43ecfde0dca9026b94640a00d4))
+
 ## [3.1.6](https://github.com/chrischall/creditkarma-mcp/compare/v3.1.5...v3.1.6) (2026-10-05)
 
 

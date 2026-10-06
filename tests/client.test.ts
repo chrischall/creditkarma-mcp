@@ -602,7 +602,7 @@ describe('CreditKarmaClient — parseTransactionPage error paths', () => {
         errors: [{ message: 'Cannot query field "frob" on type "TransactionsHub"' }]
       }), { status: 200 })
     )
-    const err = await client.fetchPage().catch(e => e as Error)
+    const err: Error = await client.fetchPage().catch(e => e)
     expect(err.message).not.toBe('TOKEN_EXPIRED')
     expect(err.message).toMatch(/GraphQL/i)
     expect(err.message).toMatch(/Cannot query field/)
@@ -612,7 +612,7 @@ describe('CreditKarmaClient — parseTransactionPage error paths', () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ errorCode: 'INTERNAL_SERVER_ERROR' }), { status: 200 })
     )
-    const err = await client.fetchPage().catch(e => e as Error)
+    const err: Error = await client.fetchPage().catch(e => e)
     expect(err.message).not.toBe('TOKEN_EXPIRED')
     expect(err.message).toMatch(/INTERNAL_SERVER_ERROR/)
   })
@@ -623,7 +623,7 @@ describe('CreditKarmaClient — parseTransactionPage error paths', () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ data: {} }), { status: 200 })
     )
-    const err = await client.fetchPage().catch(e => e as Error)
+    const err: Error = await client.fetchPage().catch(e => e)
     expect(err.message).not.toBe('TOKEN_EXPIRED')
     expect(err.message).toMatch(/prime/)
   })
@@ -632,7 +632,7 @@ describe('CreditKarmaClient — parseTransactionPage error paths', () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ data: { prime: {} } }), { status: 200 })
     )
-    const err = await client.fetchPage().catch(e => e as Error)
+    const err: Error = await client.fetchPage().catch(e => e)
     expect(err.message).not.toBe('TOKEN_EXPIRED')
     expect(err.message).toMatch(/transactionsHub/)
   })
@@ -641,7 +641,7 @@ describe('CreditKarmaClient — parseTransactionPage error paths', () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ data: { prime: { transactionsHub: {} } } }), { status: 200 })
     )
-    const err = await client.fetchPage().catch(e => e as Error)
+    const err: Error = await client.fetchPage().catch(e => e)
     expect(err.message).not.toBe('TOKEN_EXPIRED')
     expect(err.message).toMatch(/transactionPage/)
   })
@@ -650,7 +650,7 @@ describe('CreditKarmaClient — parseTransactionPage error paths', () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({}), { status: 200 })
     )
-    const err = await client.fetchPage().catch(e => e as Error)
+    const err: Error = await client.fetchPage().catch(e => e)
     expect(err.message).not.toBe('TOKEN_EXPIRED')
     // Names the actually-absent node (`data`), not `data.prime` one level down.
     expect(err.message).toMatch(/missing `data`/)

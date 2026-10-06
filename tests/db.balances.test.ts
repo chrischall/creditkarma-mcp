@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   initDb, upsertAccount, upsertTransaction, resolveAccountId, attachUrn,
   upsertCreditReportAccount, pruneCreditReportAccounts, setLinkedBalance, listBalances,
-  findAccountByProviderPrefix,
-  type Database,
+  findUnlinkedAccount, findAccountByUrn, pruneLinkedAccounts, loadMatchSnapshots, setCreditReportMatches,
+  type Database, type LinkedBalanceRow,
 } from '../src/db.js'
 
 describe('balance storage', () => {
@@ -27,7 +27,7 @@ describe('balance storage', () => {
 
     it('does not wipe balances when transaction metadata is re-upserted', () => {
       upsertAccount(db, { id: 'A|1111', name: 'a', providerName: 'A', display: 'Card (..1111)' })
-      setLinkedBalance(db, { id: 'A|1111', name: 'a', provider: 'A', display: 'A (...1111)', last4: '1111', balance: 50, asOf: '2024-02-14T00:00:00Z', syncedAt: '2024-02-15T00:00:00Z' })
+      setLinkedBalance(db, { id: 'A|1111', urn: 'urn:a', name: 'a', provider: 'A', last4: '1111', type: 'CHECKING', balance: 50, creditLimit: null, availableCredit: null, asOf: '2024-02-14T00:00:00Z', syncedAt: '2024-02-15T00:00:00Z' })
       upsertAccount(db, { id: 'A|1111', name: 'a2', providerName: 'A', display: 'Card (..1111)' })
       expect(row('A|1111')).toMatchObject({ name: 'a2', current_balance: 50, balance_source: 'linked' })
     })
@@ -52,42 +52,45 @@ describe('balance storage', () => {
     })
   })
 
-  describe('findAccountByProviderPrefix', () => {
-    // Net-worth rows show shortened provider names ("Example Bank", or
-    // "Example Bank Pe...") where transactions carry the full one
-    // ("Example Bank Personal"), so the derived ids differ.
+  describe('findUnlinkedAccount', () => {
+    // A vault account whose URN no row holds yet: the transactions may predate
+    // CK sending URNs, so find that account by institution + last4 instead.
     beforeEach(() => {
-      upsertAccount(db, { id: 'Example Bank Personal|5403', name: 'Checking', providerName: 'Example Bank Personal', display: 'Bank (..5403)' })
+      upsertAccount(db, { id: 'Example Bank|5403', name: 'Checking', providerName: 'Example Bank', display: 'Bank (..5403)' })
     })
 
-    it('finds the account whose provider starts with the shortened name, same last4', () => {
-      expect(findAccountByProviderPrefix(db, 'Example Bank', '5403')).toBe('Example Bank Personal|5403')
+    it('finds the URN-less account with the same institution (case and padding ignored) and last4', () => {
+      expect(findUnlinkedAccount(db, '  EXAMPLE BANK ', '5403')).toBe('Example Bank|5403')
     })
 
-    it('strips a truncation ellipsis and ignores case and padding', () => {
-      expect(findAccountByProviderPrefix(db, '  EXAMPLE BANK PE...', '5403')).toBe('Example Bank Personal|5403')
-      expect(findAccountByProviderPrefix(db, 'Example Bank Pe…', '5403')).toBe('Example Bank Personal|5403')
+    it('returns null for another institution, another last4, or no last4', () => {
+      expect(findUnlinkedAccount(db, 'Example', '5403')).toBeNull()
+      expect(findUnlinkedAccount(db, 'Example Bank', '0000')).toBeNull()
+      expect(findUnlinkedAccount(db, 'Example Bank', null)).toBeNull()
     })
 
-    it('also matches when the row shows the LONGER name', () => {
-      upsertAccount(db, { id: 'Sample|7777', name: 's', providerName: 'Sample', display: 'Card (..7777)' })
-      expect(findAccountByProviderPrefix(db, 'Sample Credit Union', '7777')).toBe('Sample|7777')
+    it('skips an account that already holds a URN — it belongs to that account', () => {
+      attachUrn(db, 'Example Bank|5403', 'urn:other')
+      expect(findUnlinkedAccount(db, 'Example Bank', '5403')).toBeNull()
     })
 
-    it('returns null for a different last4, a missing last4, or an empty name', () => {
-      expect(findAccountByProviderPrefix(db, 'Example Bank', '0000')).toBeNull()
-      expect(findAccountByProviderPrefix(db, 'Example Bank', null)).toBeNull()
-      expect(findAccountByProviderPrefix(db, '...', '5403')).toBeNull()
-    })
-
-    it('returns null when the prefix fits more than one account — never guesses', () => {
-      upsertAccount(db, { id: 'Example Bank Business|5403', name: 'Biz', providerName: 'Example Bank Business', display: 'Bank (..5403)' })
-      expect(findAccountByProviderPrefix(db, 'Example Bank', '5403')).toBeNull()
+    it('returns null when two accounts fit — never guesses', () => {
+      upsertAccount(db, { id: 'Example Bank|5403-b', name: 'Other', providerName: 'Example Bank', display: 'Bank (..5403)' })
+      expect(findUnlinkedAccount(db, 'Example Bank', '5403')).toBeNull()
     })
 
     it('ignores credit-report rows', () => {
-      db.prepare("UPDATE accounts SET balance_source = 'credit_report' WHERE id = 'Example Bank Personal|5403'").run()
-      expect(findAccountByProviderPrefix(db, 'Example Bank', '5403')).toBeNull()
+      db.prepare("UPDATE accounts SET balance_source = 'credit_report' WHERE id = 'Example Bank|5403'").run()
+      expect(findUnlinkedAccount(db, 'Example Bank', '5403')).toBeNull()
+    })
+  })
+
+  describe('findAccountByUrn', () => {
+    it('returns the row holding the URN, or null', () => {
+      upsertAccount(db, { id: 'A|1', name: 'a' })
+      attachUrn(db, 'A|1', 'urn:a')
+      expect(findAccountByUrn(db, 'urn:a')).toBe('A|1')
+      expect(findAccountByUrn(db, 'urn:none')).toBeNull()
     })
   })
 
@@ -143,41 +146,107 @@ describe('balance storage', () => {
   })
 
   describe('setLinkedBalance', () => {
-    const linked = {
-      id: 'Example Bank|1234', name: 'Everyday Checking', provider: 'Example Bank', display: 'Example Bank (...1234)',
-      last4: '1234', balance: 1500, asOf: '2024-02-15T10:00:00Z', syncedAt: '2024-02-15T12:00:00Z',
+    const card: LinkedBalanceRow = {
+      id: 'urn:account:fdp::accountid:card-1', urn: 'urn:account:fdp::accountid:card-1',
+      name: 'Rewards Card', provider: 'Example Card Co', last4: '4321', type: 'CREDITCARD',
+      balance: -1250.5, creditLimit: 10000, availableCredit: 8749.5,
+      asOf: '2024-02-15T10:00:00Z', syncedAt: '2024-02-15T12:00:00Z',
     }
 
-    it('creates a row for an account that has no transactions yet', () => {
-      setLinkedBalance(db, linked)
-      expect(row('Example Bank|1234')).toMatchObject({
-        name: 'Everyday Checking', provider_name: 'Example Bank', display: 'Example Bank (...1234)', last4: '1234',
-        current_balance: 1500, available_balance: null, credit_limit: null,
+    it('creates a row for an account with no transactions, keyed and URN-tagged by the URN', () => {
+      setLinkedBalance(db, card)
+      expect(row(card.id)).toMatchObject({
+        name: 'Rewards Card', type: 'CREDITCARD', provider_name: 'Example Card Co', display: null, last4: '4321',
+        account_urn: card.urn, current_balance: -1250.5, credit_limit: 10000, available_balance: 8749.5,
         balance_as_of: '2024-02-15T10:00:00Z', balances_synced_at: '2024-02-15T12:00:00Z', balance_source: 'linked',
       })
     })
 
-    it('updates balances on an existing row without renaming it or touching its display', () => {
-      upsertAccount(db, { id: 'Example Bank|1234', name: 'Checking', providerName: 'Example Bank', display: 'Checking (..1234)' })
-      setLinkedBalance(db, linked)
-      expect(row('Example Bank|1234')).toMatchObject({ name: 'Checking', display: 'Checking (..1234)', current_balance: 1500 })
+    it('updates balances on an existing transaction account without renaming it, filling only missing metadata', () => {
+      upsertAccount(db, { id: 'Example Card Co|4321', name: 'Card', providerName: 'Example Card Co', display: 'Credit (..4321)' })
+      setLinkedBalance(db, { ...card, id: 'Example Card Co|4321' })
+      expect(row('Example Card Co|4321')).toMatchObject({
+        name: 'Card', display: 'Credit (..4321)', type: 'CREDITCARD', account_urn: card.urn,
+        current_balance: -1250.5, credit_limit: 10000, available_balance: 8749.5,
+      })
     })
 
-    it('stores a NULL as-of when none is known', () => {
-      setLinkedBalance(db, { ...linked, asOf: null })
-      expect(row('Example Bank|1234')!.balance_as_of).toBeNull()
+    it('does not steal a URN another row already holds', () => {
+      upsertAccount(db, { id: 'Holder|1', name: 'h' })
+      attachUrn(db, 'Holder|1', card.urn)
+      setLinkedBalance(db, { ...card, id: 'Other|1' })
+      expect(row('Other|1')!.account_urn).toBeNull()
+    })
+
+    it('clears a limit that went away', () => {
+      setLinkedBalance(db, card)
+      setLinkedBalance(db, { ...card, creditLimit: null, availableCredit: null })
+      expect(row(card.id)).toMatchObject({ credit_limit: null, available_balance: null })
+    })
+  })
+
+  describe('pruneLinkedAccounts', () => {
+    const base: LinkedBalanceRow = {
+      id: 'x', urn: 'urn:x', name: 'n', provider: 'P', last4: null, type: 'SAVINGS',
+      balance: 1, creditLimit: null, availableCredit: null, asOf: null, syncedAt: 's',
+    }
+
+    it('deletes balance-only rows the latest refresh did not return, and unlists ones with transactions', () => {
+      setLinkedBalance(db, { ...base, id: 'kept', urn: 'urn:kept' })
+      setLinkedBalance(db, { ...base, id: 'gone', urn: 'urn:gone' })
+      upsertAccount(db, { id: 'Has Tx|1', name: 'h' })
+      upsertTransaction(db, { id: 't', date: '2024-01-01', description: 'x', status: 'posted', amount: -1, accountId: 'Has Tx|1', categoryId: null, merchantId: null, rawJson: null })
+      setLinkedBalance(db, { ...base, id: 'Has Tx|1', urn: 'urn:hastx' })
+      upsertCreditReportAccount(db, { key: 'cr:transunion:a', institution: 'I', type: 'Credit Card', category: 'credit_card', currentBalance: -1, creditLimit: 1, asOf: null }, 's')
+
+      expect(pruneLinkedAccounts(db, ['kept'])).toBe(2)
+      expect(row('gone')).toBeUndefined()
+      expect(row('Has Tx|1')).toMatchObject({ balance_source: null, current_balance: null, balance_as_of: null })
+      expect(row('kept')!.balance_source).toBe('linked')
+      expect(row('cr:transunion:a')).toBeDefined()
+    })
+
+    it('handles an empty keep list', () => {
+      setLinkedBalance(db, base)
+      expect(pruneLinkedAccounts(db, [])).toBe(1)
+    })
+  })
+
+  describe('credit-report matching storage', () => {
+    it('loads both sides and records matches, clearing stale ones', () => {
+      upsertCreditReportAccount(db, { key: 'cr:transunion:a', institution: 'Example Card Co', type: 'Credit Card', category: 'credit_card', currentBalance: -100, creditLimit: 1000, asOf: '2024-01-01' }, 's')
+      upsertCreditReportAccount(db, { key: 'cr:transunion:b', institution: 'Other', type: 'Credit Card', category: 'credit_card', currentBalance: -5, creditLimit: 50, asOf: '2024-01-01' }, 's')
+      setLinkedBalance(db, { id: 'L1', urn: 'urn:L1', name: 'Card', provider: 'Example Card Co', last4: '1', type: 'CREDITCARD', balance: -120, creditLimit: 1000, availableCredit: 880, asOf: null, syncedAt: 's' })
+      setLinkedBalance(db, { id: 'Asset', urn: 'urn:asset', name: 'Savings', provider: 'Example Card Co', last4: '2', type: 'SAVINGS', balance: 500, creditLimit: null, availableCredit: null, asOf: null, syncedAt: 's' })
+
+      const snap = loadMatchSnapshots(db)
+      expect(snap.creditReport.map(r => r.id).sort()).toEqual(['cr:transunion:a', 'cr:transunion:b'])
+      expect(snap.linked).toEqual([{ id: 'L1', institution: 'Example Card Co', creditLimit: 1000, balance: -120, asOf: null }])
+
+      setCreditReportMatches(db, new Map([['cr:transunion:b', 'L1']]))
+      setCreditReportMatches(db, new Map([['cr:transunion:a', 'L1']]))
+      expect(row('cr:transunion:a')!.matched_account_id).toBe('L1')
+      expect(row('cr:transunion:b')!.matched_account_id).toBeNull()
     })
   })
 
   describe('listBalances', () => {
-    it('lists only accounts that have a balance, linked first', () => {
+    beforeEach(() => {
       upsertAccount(db, { id: 'NoBalance|1', name: 'n' })
-      upsertCreditReportAccount(db, {
-        key: 'cr:transunion:z', institution: 'Zeta Card', type: 'Credit Card', category: 'credit_card',
-        currentBalance: -5, creditLimit: 100, asOf: '2024-01-01',
-      }, 's')
-      setLinkedBalance(db, { id: 'Alpha|1', name: 'Alpha Savings', provider: 'Alpha', display: 'Alpha (...0001)', last4: '0001', balance: 1, asOf: null, syncedAt: 's' })
-      expect(listBalances(db).map(r => r.id)).toEqual(['Alpha|1', 'cr:transunion:z'])
+      upsertCreditReportAccount(db, { key: 'cr:transunion:z', institution: 'Zeta Card', type: 'Credit Card', category: 'credit_card', currentBalance: -5, creditLimit: 100, asOf: '2024-01-01' }, 's')
+      upsertCreditReportAccount(db, { key: 'cr:transunion:m', institution: 'Alpha', type: 'Credit Card', category: 'credit_card', currentBalance: -5, creditLimit: 100, asOf: '2024-01-01' }, 's')
+      setLinkedBalance(db, { id: 'Alpha|1', urn: 'urn:a', name: 'Alpha Card', provider: 'Alpha', last4: '0001', type: 'CREDITCARD', balance: -7, creditLimit: 100, availableCredit: 93, asOf: null, syncedAt: 's' })
+      setCreditReportMatches(db, new Map([['cr:transunion:m', 'Alpha|1']]))
+    })
+
+    it('lists accounts with a balance, linked first, hiding credit-report rows matched to a linked one', () => {
+      expect(listBalances(db).map(r => [r.id, r.matched_to])).toEqual([['Alpha|1', null], ['cr:transunion:z', null]])
+    })
+
+    it('includes matched rows, with what they matched, when asked', () => {
+      expect(listBalances(db, { includeMatched: true }).map(r => [r.id, r.matched_to])).toEqual([
+        ['Alpha|1', null], ['cr:transunion:m', 'Alpha|1'], ['cr:transunion:z', null],
+      ])
     })
   })
 })

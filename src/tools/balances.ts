@@ -4,23 +4,14 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import { OPERATIONS } from '../client.js'
 import {
-  resolveAccountId, findAccountByProviderPrefix, setLinkedBalance, deleteStaleLinkedRow, upsertCreditReportAccount, pruneCreditReportAccounts, listBalances,
-  type LinkedBalanceRow, type Database,
+  findAccountByUrn, findUnlinkedAccount, setLinkedBalance, pruneLinkedAccounts,
+  upsertCreditReportAccount, pruneCreditReportAccounts, loadMatchSnapshots, setCreditReportMatches,
+  listBalances, type LinkedBalanceRow, type Database,
 } from '../db.js'
-import { deriveAccountId } from '../accountId.js'
-import {
-  BUREAU_CODE, newestReportDate, parseCreditReport, parseLinkedBalances, parseConnectionTimes,
-  findConnectionTime, dropStaleDuplicates, relativeAgeToIso, type Bureau,
-} from '../balances.js'
+import { BUREAU_CODE, newestReportDate, parseCreditReport, type Bureau } from '../creditReport.js'
+import { parseIdxAuthToken, parseVaultAccounts, searchVaultConnections, type VaultAccount } from '../vault.js'
+import { matchCreditReportAccounts } from '../matching.js'
 import { ensureAuthenticated } from './sync.js'
-
-/**
- * Net-worth account types fetched for linked balances. Not `loans`: the credit
- * report already covers them with typed, signed amounts, and the net-worth
- * page's sign for a debt is unverified — fetching both could list one loan
- * twice, once with the wrong sign.
- */
-export const LINKED_ACCOUNT_TYPES = ['cash', 'investments', 'property'] as const
 
 /**
  * Days after `balance_as_of` that a balance counts as stale, per source.
@@ -29,13 +20,20 @@ export const LINKED_ACCOUNT_TYPES = ['cash', 'investments', 'property'] as const
  */
 export const STALE_DAYS = { linked: 7, credit_report: 35 } as const
 
+/** What CK's Manage-accounts page asks idxAuth for. */
+const IDX_AUTH_VARIABLES = { source: 'NETWORTH', origin: 'MANAGE_ACCOUNTS' }
+
 export type SourceReport<T extends object = object> =
   | ({ ok: true } & T)
   | { ok: false; error: string }
 
 export interface BalanceRefreshReport {
-  linked: SourceReport<{ updated: number; unparsed: number; dropped: number }>
+  /** Live balances from the Intuit vault, for every linked account. */
+  linked: SourceReport<{ updated: number; no_balance: number; removed: number }>
+  /** Weeks-old balances and limits from one bureau's credit report. */
   credit_report: SourceReport<{ bureau: Bureau; report_date: string; updated: number; removed: number }>
+  /** Credit-report rows now hidden as duplicates of a linked account. */
+  matched: number
 }
 
 /** `CK_CREDIT_BUREAU` (`transunion` | `equifax`), defaulting to TransUnion. */
@@ -44,17 +42,18 @@ export function bureauFromEnv(): Bureau {
 }
 
 /**
- * Fetch and store balances from both sources. Never throws: each source is
- * attempted independently and reported, so one CK outage can't sink the other
- * — or the transaction sync that calls this. Each source's writes are one DB
- * transaction, so a failure part-way never leaves a mix of old and new.
+ * Fetch and store balances from both sources, then pair duplicates. Never
+ * throws: each source is attempted independently and reported, so one outage
+ * can't sink the other — or the transaction sync that calls this. Each
+ * source's writes are one DB transaction, so a failure part-way never leaves a
+ * mix of old and new. Matching runs on whatever is stored, so a source that
+ * failed this time still contributes its last known balances.
  */
 export async function refreshBalances(ctx: AppContext, now = new Date()): Promise<BalanceRefreshReport> {
   const syncedAt = now.toISOString()
-  return {
-    linked: await attempt(() => refreshLinked(ctx, now, syncedAt)),
-    credit_report: await attempt(() => refreshCreditReport(ctx, syncedAt)),
-  }
+  const linked = await attempt(() => refreshLinked(ctx, syncedAt))
+  const credit_report = await attempt(() => refreshCreditReport(ctx, syncedAt))
+  return { linked, credit_report, matched: matchDuplicates(ctx.db) }
 }
 
 async function attempt<T extends object>(fn: () => Promise<T>): Promise<SourceReport<T>> {
@@ -65,47 +64,43 @@ async function attempt<T extends object>(fn: () => Promise<T>): Promise<SourceRe
   }
 }
 
-async function refreshLinked(ctx: AppContext, now: Date, syncedAt: string) {
-  // Exact refresh times are a nicety: without them each row's own "2 hr ago"
-  // is close enough, so a failure here must not cost the balances.
-  const times = await ctx.client.runOperation(OPERATIONS.idxConnections, {})
-    .then(parseConnectionTimes, () => new Map<string, string>())
+async function refreshLinked(ctx: AppContext, syncedAt: string) {
+  const token = parseIdxAuthToken(await ctx.client.runOperation(OPERATIONS.idxAuth, IDX_AUTH_VARIABLES))
+  const accounts = parseVaultAccounts(await searchVaultConnections(token))
 
   const rows: LinkedBalanceRow[] = []
-  const staleIds: string[] = []
-  let unparsed = 0
-  for (const accountType of LINKED_ACCOUNT_TYPES) {
-    const page = parseLinkedBalances(
-      await ctx.client.runOperation(OPERATIONS.getAccountL2Page, { input: { accountType } }),
-    )
-    unparsed += page.unparsed
-    const { kept, dropped } = dropStaleDuplicates(page.rows)
-    for (const r of dropped) {
-      staleIds.push(resolveAccountId(ctx.db, deriveAccountId({ providerName: r.provider, accountTypeAndNumberDisplay: r.display })))
-    }
-    for (const r of kept) {
-      const derived = deriveAccountId({ providerName: r.provider, accountTypeAndNumberDisplay: r.display })
-      const resolved = resolveAccountId(ctx.db, derived)
-      const exists = ctx.db.prepare('SELECT 1 FROM accounts WHERE id = ?').get(resolved) !== undefined
-      rows.push({
-        id: exists ? resolved : (findAccountByProviderPrefix(ctx.db, r.provider, r.last4) ?? resolved),
-        name: r.name,
-        provider: r.provider,
-        display: r.display,
-        last4: r.last4,
-        balance: r.balance,
-        asOf: findConnectionTime(times, r.provider) ?? relativeAgeToIso(r.relativeAge, now),
-        syncedAt,
-      })
-    }
+  for (const a of accounts) {
+    if (a.balance === null) continue
+    rows.push({
+      id: accountIdFor(ctx.db, a),
+      urn: a.urn,
+      name: a.name,
+      provider: a.provider,
+      last4: a.last4,
+      type: a.type,
+      balance: a.balance,
+      creditLimit: a.creditLimit,
+      availableCredit: a.availableCredit,
+      asOf: a.asOf,
+      syncedAt,
+    })
   }
 
+  let removed = 0
   inTransaction(ctx.db, () => {
     rows.forEach(r => setLinkedBalance(ctx.db, r))
-    // A row an earlier sync stored for a now-recognised stale record.
-    staleIds.forEach(id => deleteStaleLinkedRow(ctx.db, id))
+    removed = pruneLinkedAccounts(ctx.db, rows.map(r => r.id))
   })
-  return { updated: rows.length, unparsed, dropped: staleIds.length }
+  return { updated: rows.length, no_balance: accounts.length - rows.length, removed }
+}
+
+/**
+ * The row a vault account's balance belongs on: the one already holding its
+ * URN (transactions carry the same URN), else a URN-less transaction account
+ * with the same institution and last4, else a new row keyed by the URN.
+ */
+function accountIdFor(db: Database, a: VaultAccount): string {
+  return findAccountByUrn(db, a.urn) ?? findUnlinkedAccount(db, a.provider, a.last4) ?? a.urn
 }
 
 async function refreshCreditReport(ctx: AppContext, syncedAt: string) {
@@ -123,6 +118,14 @@ async function refreshCreditReport(ctx: AppContext, syncedAt: string) {
     removed = pruneCreditReportAccounts(ctx.db, accounts.map(a => a.key))
   })
   return { bureau, report_date: date, updated: accounts.length, removed }
+}
+
+/** Mark credit-report rows that duplicate a linked account; returns how many. */
+function matchDuplicates(db: Database): number {
+  const { creditReport, linked } = loadMatchSnapshots(db)
+  const matches = matchCreditReportAccounts(creditReport, linked)
+  setCreditReportMatches(db, matches)
+  return matches.size
 }
 
 function inTransaction(db: Database, fn: () => void): void {
@@ -152,6 +155,8 @@ export interface AccountBalance {
   balance_as_of: string | null
   balances_synced_at: string | null
   source: 'linked' | 'credit_report'
+  /** For a credit-report row: the linked account it duplicates (listed only with include_matched). */
+  matched_to: string | null
   stale: boolean
 }
 
@@ -162,7 +167,7 @@ export interface GetAccountBalancesResult {
 }
 
 export async function handleGetAccountBalances(
-  args: { refresh?: boolean },
+  args: { refresh?: boolean; include_matched?: boolean },
   ctx: AppContext,
   now = new Date(),
 ): Promise<GetAccountBalancesResult> {
@@ -172,11 +177,12 @@ export async function handleGetAccountBalances(
     refresh = await refreshBalances(ctx, now)
   }
 
-  const accounts = listBalances(ctx.db).map(({ balance_source, ...r }): AccountBalance => ({
-    ...r,
-    source: balance_source,
-    stale: isStale(r.balance_as_of, STALE_DAYS[balance_source], now),
-  }))
+  const accounts = listBalances(ctx.db, { includeMatched: args.include_matched })
+    .map(({ balance_source, ...r }): AccountBalance => ({
+      ...r,
+      source: balance_source,
+      stale: isStale(r.balance_as_of, STALE_DAYS[balance_source], now),
+    }))
   return { accounts, ...(refresh ? { refresh } : {}) }
 }
 
@@ -190,17 +196,21 @@ export function registerBalanceTools(server: McpServer, ctx: AppContext): void {
     'ck_get_account_balances',
     {
       description:
-        'Current balance of every account Credit Karma knows about: institution, type, last 4, ' +
-        'current balance, available balance and credit limit where known, and the as-of time CK ' +
-        'reports. Reads the local database (filled by ck_sync_transactions); pass refresh:true to ' +
-        'fetch live first. Two sources, marked by `source`: "linked" accounts (bank, investment — ' +
-        'refreshed by CK about daily) and "credit_report" accounts (cards, loans — as of the ' +
-        'bureau\'s last report, typically 2–5 weeks old; no last 4). Liabilities are negative, ' +
-        'matching transactions. `stale` is true past 7 days (linked) or 35 days (credit report).',
+        'Current balance of every account: institution, type, last 4, current balance, available ' +
+        'credit and credit limit (cards), and the as-of time. Reads the local database (filled by ' +
+        'ck_sync_transactions); pass refresh:true to fetch live first. `source` "linked" = a linked ' +
+        'bank, card, loan or investment account, live from the account aggregator (refreshed about ' +
+        'daily). `source` "credit_report" = a card or loan from the credit report (2–5 weeks old, no ' +
+        'last 4); one that duplicates a linked account is hidden unless include_matched:true. ' +
+        'Liabilities are negative, matching transactions; available credit is limit minus balance. ' +
+        '`stale` is true past 7 days (linked) or 35 days (credit report).',
       annotations: { readOnlyHint: false, idempotentHint: true },
       inputSchema: z.object({
         refresh: z.boolean().optional().describe(
-          'Fetch balances live from Credit Karma before reading. Default false (local data only).',
+          'Fetch balances live before reading. Default false (local data only).',
+        ),
+        include_matched: z.boolean().optional().describe(
+          'Also list credit-report rows that duplicate a linked account (each names it in matched_to). Default false.',
         ),
       }),
     },

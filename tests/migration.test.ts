@@ -58,9 +58,9 @@ describe('schema v2 migration on an existing v1 database', () => {
     const cols = (db.prepare('PRAGMA table_info(accounts)').all() as Array<{ name: string }>).map(c => c.name)
     expect(cols).toEqual(expect.arrayContaining([
       'account_urn', 'last4', 'current_balance', 'available_balance', 'credit_limit',
-      'balance_as_of', 'balances_synced_at', 'balance_source',
+      'balance_as_of', 'balances_synced_at', 'balance_source', 'matched_account_id',
     ]))
-    expect((db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number }).v).toBe(2)
+    expect((db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number }).v).toBe(3)
     expect(account(db, 'Example Bank|1234')).toMatchObject({ current_balance: null, balance_source: null })
     db.close()
   })
@@ -245,6 +245,18 @@ describe('schema v2 migration on an existing v1 database', () => {
     // And a clean retry succeeds.
     const db = initDb(path)
     expect(account(db, 'A|1111')!.provider_name).toBe('A')
+    db.close()
+  })
+
+  it('upgrades a v2 database to v3 by adding matched_account_id, keeping balances', () => {
+    seedV1(path, [{ id: 'A|1111', provider: 'A', display: 'Card (..1111)' }], [])
+    const v2 = new DatabaseSync(path)
+    v2.exec('BEGIN'); MIGRATIONS[2](v2); v2.exec('COMMIT')
+    v2.prepare("UPDATE accounts SET current_balance = -5, balance_source = 'linked' WHERE id = 'A|1111'").run()
+    v2.close()
+    const db = initDb(path)
+    expect((db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number }).v).toBe(3)
+    expect(account(db, 'A|1111')).toMatchObject({ current_balance: -5, balance_source: 'linked', matched_account_id: null })
     db.close()
   })
 

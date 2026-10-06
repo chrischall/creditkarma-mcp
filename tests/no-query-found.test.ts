@@ -137,11 +137,20 @@ describe('persisted-query request shape', () => {
   })
 })
 
+describe('compiled GetTransactions hash', () => {
+  it('is the one CK\'s prime_web 2.0.35 manifest lists (read 2026-10-06)', () => {
+    // The older 9b5109d1… still resolved only via in-process rediscovery,
+    // costing every server start an extra bundle scan.
+    expect(TRANSACTION_QUERY_HASH).toBe('e84296c61147719ced605fbba7bb30ef847903dd07f3a4f7c2ea8d0db107338e')
+    expect(CK_CLIENT_VERSION).toBe('2.0.35')
+  })
+})
+
 describe('fetchPage — recovering from a rotated hash', () => {
   // CK rotates persisted hashes on web deploys. Rather than fail until someone
   // ships a new constant, re-read the hash from CK's own bundle and replay —
   // but only once per client, and only when there is a session to read it with.
-  const HASH = '9b5109d15254ad7fc7d18f597b4026422a69bdc48a4be7d43823866a6ea15915'
+  const HASH = TRANSACTION_QUERY_HASH
   const ROTATED = '0abcdb8c8b3632cf3d9922f66c66fb032953e9205e3b6952076d9da9ccf61cd4'
 
   afterEach(() => {

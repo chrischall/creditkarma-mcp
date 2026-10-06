@@ -51,7 +51,7 @@ const RATE_LIMIT_BACKOFF_MS = 2000
  * as documentation of where {@link TRANSACTION_QUERY_HASH} came from.
  */
 export const CK_CLIENT_NAME = 'prime_web'
-export const CK_CLIENT_VERSION = '2.0.31'
+export const CK_CLIENT_VERSION = '2.0.35'
 
 /** Operation name that goes alongside the persisted hash. */
 export const TRANSACTION_OPERATION_NAME = 'GetTransactions'
@@ -71,7 +71,7 @@ export const TRANSACTION_OPERATION_NAME = 'GetTransactions'
  * operations.
  */
 export const TRANSACTION_QUERY_HASH =
-  '9b5109d15254ad7fc7d18f597b4026422a69bdc48a4be7d43823866a6ea15915'
+  'e84296c61147719ced605fbba7bb30ef847903dd07f3a4f7c2ea8d0db107338e'
 
 export const GRAPHQL_ENDPOINT = 'https://api.creditkarma.com/graphql'
 

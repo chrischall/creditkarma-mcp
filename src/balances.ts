@@ -210,6 +210,24 @@ function toRow(texts: string[]): LinkedAccountBalance | null {
 }
 
 /**
+ * Split out stale duplicate records. Credit Karma can list one account twice:
+ * the live record, shown "(...6801)", and an abandoned one for the same
+ * account whose number it formats "(...8-01)". The stale one never refreshes —
+ * measured 2026-10-06 on three 529 plans: "updated" tens of days ago, no change
+ * history, 90–95% of the live balance. A row is dropped only when it has NO
+ * real last4 AND another row with the identical name has one; same-named rows
+ * that both have (or both lack) a real last4 are kept, since nothing says
+ * which would be stale.
+ */
+export function dropStaleDuplicates(rows: LinkedAccountBalance[]): { kept: LinkedAccountBalance[]; dropped: LinkedAccountBalance[] } {
+  const live = new Set(rows.filter(r => r.last4 !== null).map(r => r.name.trim()))
+  const kept: LinkedAccountBalance[] = []
+  const dropped: LinkedAccountBalance[] = []
+  for (const r of rows) (r.last4 === null && live.has(r.name.trim()) ? dropped : kept).push(r)
+  return { kept, dropped }
+}
+
+/**
  * Exact last-refresh time per institution, keyed by lower-cased trimmed
  * provider name. When one institution has several connections we can't tell
  * which an account belongs to, so the OLDEST wins — it can only make a balance

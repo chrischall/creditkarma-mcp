@@ -4,13 +4,13 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import { OPERATIONS } from '../client.js'
 import {
-  resolveAccountId, findAccountByProviderPrefix, setLinkedBalance, upsertCreditReportAccount, pruneCreditReportAccounts, listBalances,
+  resolveAccountId, findAccountByProviderPrefix, setLinkedBalance, deleteStaleLinkedRow, upsertCreditReportAccount, pruneCreditReportAccounts, listBalances,
   type LinkedBalanceRow, type Database,
 } from '../db.js'
 import { deriveAccountId } from '../accountId.js'
 import {
   BUREAU_CODE, newestReportDate, parseCreditReport, parseLinkedBalances, parseConnectionTimes,
-  findConnectionTime, relativeAgeToIso, type Bureau,
+  findConnectionTime, dropStaleDuplicates, relativeAgeToIso, type Bureau,
 } from '../balances.js'
 import { ensureAuthenticated } from './sync.js'
 
@@ -34,7 +34,7 @@ export type SourceReport<T extends object = object> =
   | { ok: false; error: string }
 
 export interface BalanceRefreshReport {
-  linked: SourceReport<{ updated: number; unparsed: number }>
+  linked: SourceReport<{ updated: number; unparsed: number; dropped: number }>
   credit_report: SourceReport<{ bureau: Bureau; report_date: string; updated: number; removed: number }>
 }
 
@@ -72,13 +72,18 @@ async function refreshLinked(ctx: AppContext, now: Date, syncedAt: string) {
     .then(parseConnectionTimes, () => new Map<string, string>())
 
   const rows: LinkedBalanceRow[] = []
+  const staleIds: string[] = []
   let unparsed = 0
   for (const accountType of LINKED_ACCOUNT_TYPES) {
     const page = parseLinkedBalances(
       await ctx.client.runOperation(OPERATIONS.getAccountL2Page, { input: { accountType } }),
     )
     unparsed += page.unparsed
-    for (const r of page.rows) {
+    const { kept, dropped } = dropStaleDuplicates(page.rows)
+    for (const r of dropped) {
+      staleIds.push(resolveAccountId(ctx.db, deriveAccountId({ providerName: r.provider, accountTypeAndNumberDisplay: r.display })))
+    }
+    for (const r of kept) {
       const derived = deriveAccountId({ providerName: r.provider, accountTypeAndNumberDisplay: r.display })
       const resolved = resolveAccountId(ctx.db, derived)
       const exists = ctx.db.prepare('SELECT 1 FROM accounts WHERE id = ?').get(resolved) !== undefined
@@ -95,8 +100,12 @@ async function refreshLinked(ctx: AppContext, now: Date, syncedAt: string) {
     }
   }
 
-  inTransaction(ctx.db, () => rows.forEach(r => setLinkedBalance(ctx.db, r)))
-  return { updated: rows.length, unparsed }
+  inTransaction(ctx.db, () => {
+    rows.forEach(r => setLinkedBalance(ctx.db, r))
+    // A row an earlier sync stored for a now-recognised stale record.
+    staleIds.forEach(id => deleteStaleLinkedRow(ctx.db, id))
+  })
+  return { updated: rows.length, unparsed, dropped: staleIds.length }
 }
 
 async function refreshCreditReport(ctx: AppContext, syncedAt: string) {

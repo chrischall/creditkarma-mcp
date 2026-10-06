@@ -5,7 +5,9 @@ import {
   parseLinkedBalances,
   parseConnectionTimes,
   findConnectionTime,
+  dropStaleDuplicates,
   relativeAgeToIso,
+  type LinkedAccountBalance,
   BUREAU_CODE,
 } from '../src/balances.js'
 import {
@@ -267,6 +269,43 @@ describe('parseConnectionTimes', () => {
   it('returns an empty map for an unexpected shape', () => {
     expect(parseConnectionTimes({ data: { prime: { idxConnections: { __typename: 'Prime_ServerError' } } } })).toEqual(new Map())
     expect(parseConnectionTimes(null)).toEqual(new Map())
+  })
+})
+
+describe('dropStaleDuplicates', () => {
+  // Credit Karma can list one account twice: the live record "(...6801)" and a
+  // stale one for the same plan whose number it formats "(...8-01)", which
+  // never refreshes (measured 2026-10-06 on 529 plans: updated tens of days
+  // ago, no change history, 90–95% of the live balance).
+  const r = (name: string, last4: string | null, display = `X (...${last4 ?? '8-01'})`): LinkedAccountBalance => ({
+    name, provider: 'X', display, last4, balance: 1, relativeAge: null, needsAttention: false,
+  })
+
+  it('drops the row without a real last4 when a same-named row has one', () => {
+    const live = r('College Plan', '6801')
+    const stale = r('College Plan', null)
+    expect(dropStaleDuplicates([stale, live])).toEqual({ kept: [live], dropped: [stale] })
+  })
+
+  it('matches names ignoring surrounding whitespace', () => {
+    const live = r('College Plan', '6801')
+    const stale = r('  College Plan ', null)
+    expect(dropStaleDuplicates([live, stale]).dropped).toEqual([stale])
+  })
+
+  it('keeps same-named rows that both have a real last4 — two genuine accounts', () => {
+    const rows = [r('Savings', '1111'), r('Savings', '2222')]
+    expect(dropStaleDuplicates(rows)).toEqual({ kept: rows, dropped: [] })
+  })
+
+  it('keeps same-named rows that both lack a real last4 — nothing says which is stale', () => {
+    const rows = [r('HSA', null, 'Y (...ount)'), r('HSA', null, 'Z (...ount)')]
+    expect(dropStaleDuplicates(rows)).toEqual({ kept: rows, dropped: [] })
+  })
+
+  it('keeps a lone row without a real last4', () => {
+    const rows = [r('HSA', null, 'Y (...ount)'), r('Other', '1234')]
+    expect(dropStaleDuplicates(rows)).toEqual({ kept: rows, dropped: [] })
   })
 })
 

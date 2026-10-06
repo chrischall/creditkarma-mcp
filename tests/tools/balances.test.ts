@@ -4,7 +4,7 @@ import {
   STALE_DAYS, LINKED_ACCOUNT_TYPES,
 } from '../../src/tools/balances.js'
 import { CreditKarmaClient, type OperationSpec } from '../../src/client.js'
-import { initDb, upsertAccount, upsertCreditReportAccount, setLinkedBalance } from '../../src/db.js'
+import { initDb, upsertAccount, upsertTransaction, upsertCreditReportAccount, setLinkedBalance } from '../../src/db.js'
 import type { AppContext } from '../../src/index.js'
 import { fakeServer } from '../helpers.js'
 import {
@@ -68,7 +68,7 @@ describe('refreshBalances', () => {
 
     const report = await refreshBalances(ctx, NOW)
 
-    expect(report.linked).toEqual({ ok: true, updated: 2, unparsed: 0 })
+    expect(report.linked).toEqual({ ok: true, updated: 2, unparsed: 0, dropped: 0 })
     expect(row('Example Bank|1234')).toMatchObject({
       name: 'Checking', current_balance: 1234.56, balance_as_of: '2024-02-15T09:00:00Z',
       balances_synced_at: NOW.toISOString(), balance_source: 'linked',
@@ -125,6 +125,45 @@ describe('refreshBalances', () => {
     expect(row('Example Brokerage - Ind...|9876')).toMatchObject({ current_balance: 500, balance_as_of: '2024-02-14T08:00:00Z' })
   })
 
+  it('skips a stale duplicate record and removes the row an earlier sync stored for it', async () => {
+    // The row a previous version stored for the stale "(...8-01)" record.
+    setLinkedBalance(ctx.db, {
+      id: 'Example Brokerage - Ind...|8-01', name: 'College Plan', provider: 'Example Brokerage - Ind...',
+      display: 'Example Brokerage - Ind... (...8-01)', last4: null, balance: 90, asOf: null, syncedAt: 'earlier',
+    })
+    stubCk(ctx, {
+      ...happyCk(),
+      getAccountL2Page: (v) => (v.input as { accountType: string }).accountType === 'investments'
+        ? l2Page([
+            investmentRow('College Plan', '$100', 'Example Brokerage - Ind... (...6801)', '▲ $1 (1.0%)'),
+            investmentRow('College Plan', '$90', 'Example Brokerage - Ind... (...8-01)', ''),
+          ])
+        : l2Page([]),
+    })
+
+    const report = await refreshBalances(ctx, NOW)
+
+    expect(report.linked).toEqual({ ok: true, updated: 1, unparsed: 0, dropped: 1 })
+    expect(row('Example Brokerage - Ind...|6801')!.current_balance).toBe(100)
+    expect(row('Example Brokerage - Ind...|8-01')).toBeUndefined()
+  })
+
+  it('never deletes a dropped duplicate\'s row that has transactions', async () => {
+    upsertAccount(ctx.db, { id: 'Example Brokerage - Ind...|8-01', name: 'College Plan' })
+    upsertTransaction(ctx.db, { id: 't', date: '2024-01-01', description: 'x', status: 'posted', amount: 1, accountId: 'Example Brokerage - Ind...|8-01', categoryId: null, merchantId: null, rawJson: null })
+    stubCk(ctx, {
+      ...happyCk(),
+      getAccountL2Page: (v) => (v.input as { accountType: string }).accountType === 'investments'
+        ? l2Page([
+            investmentRow('College Plan', '$100', 'Example Brokerage - Ind... (...6801)', '▲ $1 (1.0%)'),
+            investmentRow('College Plan', '$90', 'Example Brokerage - Ind... (...8-01)', ''),
+          ])
+        : l2Page([]),
+    })
+    await refreshBalances(ctx, NOW)
+    expect(row('Example Brokerage - Ind...|8-01')).toBeDefined()
+  })
+
   it('still records linked balances when idxConnections fails, using the relative age', async () => {
     stubCk(ctx, { ...happyCk(), idxConnections: () => { throw new Error('idx down') } })
     const report = await refreshBalances(ctx, NOW)
@@ -143,7 +182,7 @@ describe('refreshBalances', () => {
         : l2Page([]),
     })
     const report = await refreshBalances(ctx, NOW)
-    expect(report.linked).toEqual({ ok: true, updated: 1, unparsed: 1 })
+    expect(report.linked).toEqual({ ok: true, updated: 1, unparsed: 1, dropped: 0 })
   })
 
   it('writes NO linked balances if any account-type page fails', async () => {

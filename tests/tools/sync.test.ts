@@ -678,7 +678,7 @@ describe('ck_sync_transactions — balances and account identity', () => {
 
     expect(result.total).toBe(1)
     expect(result.balances).toEqual({
-      linked: { ok: true, updated: 0, unparsed: 0 },
+      linked: { ok: true, updated: 0, unparsed: 0, dropped: 0 },
       credit_report: { ok: true, bureau: 'transunion', report_date: '2024-02-01T10:00:00Z', updated: 1, removed: 0 },
     })
     // idxConnections + 3 account-type pages + history + report.

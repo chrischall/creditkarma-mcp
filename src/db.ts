@@ -350,6 +350,20 @@ export function pruneCreditReportAccounts(db: Database, keep: string[]): number 
   return Number(result.changes)
 }
 
+/**
+ * Remove a linked-balance row that turned out to be a stale duplicate record.
+ * Only a row that exists purely for its balance goes: one with transactions,
+ * or from any other source, is left alone. Returns whether a row was removed.
+ */
+export function deleteStaleLinkedRow(db: Database, id: string): boolean {
+  const result = db.prepare(`
+    DELETE FROM accounts
+    WHERE id = ? AND balance_source = 'linked'
+      AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.account_id = accounts.id)
+  `).run(id)
+  return Number(result.changes) > 0
+}
+
 export interface LinkedBalanceRow {
   id: string
   name: string

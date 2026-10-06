@@ -17,9 +17,9 @@ describe('initDb', () => {
     db = initDb(':memory:')
   })
 
-  it('creates schema_version table with version 1', () => {
-    const row = db.prepare('SELECT version FROM schema_version').get() as { version: number }
-    expect(row.version).toBe(1)
+  it('creates schema_version table at the current version (2)', () => {
+    const row = db.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }
+    expect(row.version).toBe(2)
   })
 
   it('creates transactions table', () => {
@@ -91,7 +91,7 @@ describe('initDb — file-based tests', () => {
     db1.close()
     const db2 = initDb(dbPath)
     const row = db2.prepare('SELECT COUNT(*) as n FROM schema_version').get() as { n: number }
-    expect(row.n).toBe(1)
+    expect(row.n).toBe(2)
     db2.close()
   })
 
@@ -103,16 +103,16 @@ describe('initDb — file-based tests', () => {
 
     // initDb should detect version=0 (from ??) and run all migrations
     const db = initDb(dbPath)
-    const row = db.prepare('SELECT version FROM schema_version').get() as { version: number }
-    expect(row.version).toBe(1)
+    const row = db.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }
+    expect(row.version).toBe(2)
     db.close()
   })
 
   it('creates parent directory if it does not exist', () => {
     const nestedPath = join(tmpDir, 'sub', 'transactions.db')
     const db = initDb(nestedPath)
-    const row = db.prepare('SELECT version FROM schema_version').get() as { version: number }
-    expect(row.version).toBe(1)
+    const row = db.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }
+    expect(row.version).toBe(2)
     db.close()
   })
 })
@@ -341,7 +341,7 @@ describe('backfillAccountIds', () => {
 
     const accounts = db.prepare('SELECT id, name, provider_name FROM accounts ORDER BY id').all() as Array<{ id: string, name: string, provider_name: string }>
     expect(accounts).toEqual([
-      { id: 'Ally|7133', name: 'Spending', provider_name: 'Ally   ' },
+      { id: 'Ally|7133', name: 'Spending', provider_name: 'Ally' },
       { id: 'Citi|2630', name: 'AAdvantage', provider_name: 'Citi' }
     ])
 

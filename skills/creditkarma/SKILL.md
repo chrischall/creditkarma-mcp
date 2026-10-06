@@ -1,6 +1,6 @@
 ---
 name: creditkarma
-description: Access Credit Karma transaction data via MCP. Use when the user asks about their Credit Karma transactions, spending by category or merchant, account summaries, or wants to sync or query their financial data. Triggers on phrases like "sync my transactions", "what did I spend on", "show my Credit Karma data", "spending by category", "top merchants", or any request involving personal finance data from Credit Karma. Requires creditkarma-mcp installed and the creditkarma server registered (see Setup below).
+description: Access Credit Karma transaction data via MCP. Use when the user asks about their Credit Karma transactions, spending by category or merchant, account summaries, account balances, or wants to sync or query their financial data. Triggers on phrases like "sync my transactions", "what did I spend on", "show my Credit Karma data", "spending by category", "top merchants", or any request involving personal finance data from Credit Karma. Requires creditkarma-mcp installed and the creditkarma server registered (see Setup below).
 ---
 
 # creditkarma-mcp
@@ -101,6 +101,7 @@ The MCP handles auth automatically once any of the three paths is configured.
 | `ck_get_spending_by_category(start_date?, end_date?)` | Spending totals grouped by category |
 | `ck_get_spending_by_merchant(start_date?, end_date?, limit?)` | Spending totals grouped by merchant |
 | `ck_get_account_summary` | Transaction counts and totals per account |
+| `ck_get_account_balances(refresh?)` | Balance per account: institution, type, last 4, current balance, credit limit, `balance_as_of`, `source` (`linked` or `credit_report`) and `stale`. Liabilities are negative. Credit-report balances (cards, loans) lag 2–5 weeks by nature — say so when quoting them |
 | `ck_query_sql(sql, max_rows?)` | Read-only SQL query against the local database (SELECT only; at most `max_rows` rows, default 500 / max 5000 — `truncated: true` means page with LIMIT/OFFSET or aggregate) |
 
 ## Workflows
@@ -113,6 +114,12 @@ The MCP handles auth automatically once any of the three paths is configured.
 **Regular use:**
 - `ck_sync_transactions` → pull latest transactions
 - Then query with any of the query tools
+
+**Balances:**
+```
+ck_get_account_balances                # last synced balances (ck_sync_transactions refreshes them)
+ck_get_account_balances(refresh: true) # fetch live first
+```
 
 **Spending analysis:**
 ```
@@ -139,7 +146,10 @@ GROUP BY c.name ORDER BY total DESC
 
 ```sql
 transactions (id, date, description, status, amount, account_id, category_id, merchant_id, raw_json)
-accounts     (id, name, type, provider_name, display)
+accounts     (id, name, type, provider_name, display, last4, account_urn,
+              current_balance, available_balance, credit_limit,
+              balance_as_of, balances_synced_at, balance_source)
+account_aliases (alias, account_id)
 categories   (id, name, type)
 merchants    (id, name)
 sync_state   (key, value)

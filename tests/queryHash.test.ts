@@ -4,6 +4,8 @@ import {
   TRANSACTIONS_PAGE_URL,
   HASH_MANIFEST_MARKER,
   MAX_CHUNKS_SCANNED,
+  PRIME_WEB_SOURCE,
+  CREDIT_HEALTH_SOURCE,
 } from '../src/queryHash.js'
 
 // CK rotates its persisted-query hashes on web deploys, which would otherwise
@@ -172,5 +174,30 @@ describe('discoverQueryHash', () => {
 
     expect(vi.getTimerCount()).toBe(0)
     vi.useRealTimers()
+  })
+})
+
+describe('discoverQueryHash — other CK web apps', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  const HEALTH_BASE = 'https://creditkarmacdn-a.akamaihd.net/res/content/bundles/credit-health/1.2.1/_next/static/chunks'
+
+  it('reads the credit-health bundle from its own page', async () => {
+    const spy = vi.spyOn(global, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === CREDIT_HEALTH_SOURCE.pageUrl) {
+        // A prime_web chunk on the page must be ignored — wrong app's registry.
+        return new Response(`<script src="${CHUNK_BASE}/9-p.js"></script><script src="${HEALTH_BASE}/1-h.js"></script>`)
+      }
+      if (url.endsWith('/1-h.js')) return new Response(manifestChunk({ getCreditReport: HASH }))
+      return new Response('', { status: 404 })
+    })
+
+    await expect(discoverQueryHash('getCreditReport', 'CKAT=x', CREDIT_HEALTH_SOURCE)).resolves.toBe(HASH)
+    expect(spy.mock.calls.map(c => String(c[0]))).toEqual([CREDIT_HEALTH_SOURCE.pageUrl, `${HEALTH_BASE}/1-h.js`])
+  })
+
+  it('defaults to the prime_web app', () => {
+    expect(PRIME_WEB_SOURCE).toEqual({ pageUrl: TRANSACTIONS_PAGE_URL, bundle: 'prime_web' })
   })
 })

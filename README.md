@@ -18,6 +18,7 @@ Ask Claude things like:
 - *"Show me my top merchants this year"*
 - *"How much did I spend in March compared to February?"*
 - *"Which accounts have the most activity?"*
+- *"What are my account balances?"*
 - *"Run a SQL query against my transactions"*
 
 ## Requirements
@@ -154,7 +155,8 @@ The server extracts the access and refresh JWTs from the `CKAT` cookie inside th
 |------|-------------|
 | `ck_set_session` | Store credentials from your browser Cookie header (auto-extracts JWTs from the CKAT cookie) |
 | `ck_forget_session` | Delete the saved-session file and clear in-memory credentials (local only; synced transactions are kept) |
-| `ck_sync_transactions` | Sync transactions into the local SQLite database |
+| `ck_sync_transactions` | Sync transactions into the local SQLite database, then refresh account balances |
+| `ck_get_account_balances` | Balance of every account: institution, type, last 4, current balance, credit limit, as-of time and a `stale` flag. `refresh: true` fetches live first |
 | `ck_list_transactions` | List transactions with filters (date, account, category, merchant, amount) |
 | `ck_get_recent_transactions` | Fetch the N most recent transactions |
 | `ck_get_spending_by_category` | Spending totals grouped by category |
@@ -168,13 +170,23 @@ Transactions are synced from Credit Karma's GraphQL API into a local SQLite data
 
 **Sync strategy**: incremental by default (fetches since last sync date with a 30-day overlap for updates). Use `force_full: true` to walk the whole history with no date cutoff — it starts from the beginning, except that a repeated `force_full` continues a backfill that paused on `max_pages`. After a sync that failed or stopped on a stuck cursor, `force_full` restarts from page 1 (a plain call retries from the saved cursor).
 
+**Account balances**: each sync also refreshes balances once, from two sources (a failure in either is reported in the result's `balances`, never thrown, and the transactions still sync):
+
+- **Linked accounts** (bank, investment) come from Credit Karma's net-worth pages and are matched to your transaction accounts by institution + last 4. The as-of time is the institution connection's last refresh.
+- **Credit cards and loans** come from your credit report (TransUnion by default; set `CK_CREDIT_BUREAU=equifax` to switch). These are as of the bureau's last report, usually 2–5 weeks old; they include credit limits but no last 4. Closed accounts are dropped.
+
+Balances follow the transaction sign convention: assets are positive, money owed (card balances, loans) is **negative**; `credit_limit` is positive. Credit Karma does not expose an available balance, so `available_balance` is always null. `stale` is true when `balance_as_of` is more than 7 days old for linked accounts, or 35 days for credit-report accounts.
+
 **Auto-refresh**: if the access token has expired, the server automatically refreshes it before syncing. If the refresh token has also expired, it throws an error asking you to re-authenticate.
 
 ## Database schema
 
 ```sql
 transactions (id, date, description, status, amount, account_id, category_id, merchant_id, raw_json)
-accounts     (id, name, type, provider_name, display)
+accounts     (id, name, type, provider_name, display, last4, account_urn,
+              current_balance, available_balance, credit_limit,
+              balance_as_of, balances_synced_at, balance_source)
+account_aliases (alias, account_id)
 categories   (id, name, type)
 merchants    (id, name)
 sync_state   (key, value)
@@ -187,6 +199,7 @@ sync_state   (key, value)
 | `CK_COOKIES` | Full Cookie header from a signed-in creditkarma.com request | *(unset — falls back to fetchproxy)* |
 | `CK_DISABLE_FETCHPROXY` | Set to `1` to skip the fetchproxy fallback (headless / CI) | *(unset)* |
 | `CK_DB_PATH` | Path to SQLite database file | `~/.creditkarma-mcp/transactions.db` |
+| `CK_CREDIT_BUREAU` | Credit report used for card and loan balances: `transunion` or `equifax` | `transunion` |
 
 ## Troubleshooting
 
@@ -245,6 +258,7 @@ src/
   client.ts             Credit Karma GraphQL client (auto-refresh, JWT helpers, cookie parser)
   index.ts              MCP server entry point; bootstraps tokens from the saved session / CK_COOKIES
   db.ts                 SQLite schema, migrations, and upsert helpers
+  balances.ts           Parsers for the balance responses (credit report + net-worth pages)
   transaction.graphql   Documents the transactions selection set (sent as a persisted-query hash, not this text)
   tools/
     auth.ts             ck_set_session — refuses stale refresh tokens, saves ~/.creditkarma-mcp/session at 0600;
@@ -253,6 +267,7 @@ src/
     query.ts            ck_list_transactions, ck_get_recent_transactions,
                         ck_get_spending_by_category, ck_get_spending_by_merchant,
                         ck_get_account_summary
+    balances.ts         ck_get_account_balances + the balance refresh run by every sync
     sql.ts              ck_query_sql — SELECT-only escape hatch
 tests/
   helpers.ts            Shared test helpers (fakeServer, makeJwt)

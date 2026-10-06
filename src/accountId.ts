@@ -18,7 +18,22 @@ export function deriveAccountId(account: AccountIdSource): string {
   return `${provider}|${last4}`
 }
 
+/**
+ * The fragment inside "(..xxxx)". Transactions use two dots, the net-worth
+ * pages three, so both must yield the same fragment or one account gets two ids.
+ * Deliberately unvalidated: existing ids were built from whatever CK put there
+ * (HealthEquity's "ount" included), and changing that would orphan their rows.
+ */
 function extractLast4(display: string): string {
-  const m = display.match(/\(\.\.([^)]+)\)/)
+  const m = display.match(/\(\.{2,}([^)]+)\)/)
   return m?.[1] ?? display
+}
+
+/**
+ * The account's real last four digits, or null when CK's display carries
+ * something else — e.g. HealthEquity's "(..ount)", a truncated "account".
+ */
+export function parseLast4(display: string | null | undefined): string | null {
+  const m = (display ?? '').match(/\(\.{2,}([^)]+)\)/)
+  return m && /^\d{4}$/.test(m[1]) ? m[1] : null
 }

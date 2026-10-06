@@ -286,6 +286,28 @@ export function resolveAccountId(db: Database, derivedId: string, urn?: string |
   return alias?.account_id ?? derivedId
 }
 
+/**
+ * The one existing account a net-worth row belongs to when its synthetic id
+ * doesn't match. Those pages show SHORTENED provider names ("Example Bank" or
+ * "Example Bank Pe..." for "Example Bank Personal"), so `provider|last4`
+ * derives a different id than the transactions did. Match on the same real
+ * last4 plus a provider prefix in either direction — and only when exactly one
+ * account fits, so an ambiguous row gets its own row rather than a wrong home.
+ * Credit-report rows are never candidates.
+ */
+export function findAccountByProviderPrefix(db: Database, provider: string, last4: string | null): string | null {
+  const stem = provider.trim().toLowerCase().replace(/(\.\.\.|…)$/, '').trim()
+  if (!last4 || stem === '') return null
+  const candidates = (db.prepare(`
+    SELECT id, provider_name FROM accounts
+    WHERE last4 = ? AND provider_name IS NOT NULL AND balance_source IS NOT 'credit_report'
+  `).all(last4) as Array<{ id: string, provider_name: string }>).filter(a => {
+    const name = a.provider_name.toLowerCase()
+    return name.startsWith(stem) || stem.startsWith(name)
+  })
+  return candidates.length === 1 ? candidates[0].id : null
+}
+
 /** Record `urn` on an account that has none, unless another row already holds it. */
 export function attachUrn(db: Database, accountId: string, urn: string): void {
   db.prepare(`

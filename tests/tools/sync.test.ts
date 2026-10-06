@@ -681,8 +681,30 @@ describe('ck_sync_transactions — balances and account identity', () => {
       linked: { ok: true, updated: 0, unparsed: 0 },
       credit_report: { ok: true, bureau: 'transunion', report_date: '2024-02-01T10:00:00Z', updated: 1, removed: 0 },
     })
-    // idxConnections + 4 account-type pages + history + report.
-    expect(ops).toHaveBeenCalledTimes(7)
+    // idxConnections + 3 account-type pages + history + report.
+    expect(ops).toHaveBeenCalledTimes(6)
+  })
+
+  it('skips the balance refresh on a call that pauses with more pages to fetch', async () => {
+    // Hosted, CK_SYNC_MAX_PAGES exists so each call answers inside the
+    // client's timeout; seven extra GraphQL calls on every step would eat that.
+    vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')], true, 'c1'))
+    const ops = vi.spyOn(ctx.client, 'runOperation')
+
+    const result = await handleSyncTransactions({ max_pages: 1 }, ctx)
+
+    expect(result.another_run_needed).toBe(true)
+    expect(result.balances).toBeUndefined()
+    expect(result.note).toMatch(/balances refresh once the sync completes/i)
+    expect(ops).not.toHaveBeenCalled()
+  })
+
+  it('still refreshes balances after a stuck cursor — no further run is coming', async () => {
+    vi.spyOn(ctx.client, 'fetchPage').mockResolvedValue(makePage([makeTx('tx1', '2024-02-10')], true, 'same-cursor'))
+    vi.spyOn(ctx.client, 'runOperation').mockRejectedValue(new Error('skip'))
+    const result = await handleSyncTransactions({}, ctx)
+    expect(result.stopped).toBe('cursor_stuck')
+    expect(result.balances).toBeDefined()
   })
 
   it('finishes the transaction sync and reports — not throws — when the balance fetch fails', async () => {

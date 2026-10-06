@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   initDb, upsertAccount, upsertTransaction, resolveAccountId, attachUrn,
   upsertCreditReportAccount, pruneCreditReportAccounts, setLinkedBalance, listBalances,
+  findAccountByProviderPrefix,
   type Database,
 } from '../src/db.js'
 
@@ -48,6 +49,45 @@ describe('balance storage', () => {
       upsertAccount(db, { id: 'Survivor|9999', name: 's' })
       db.prepare("INSERT INTO account_aliases (alias, account_id) VALUES ('Retired|9999', 'Survivor|9999')").run()
       expect(resolveAccountId(db, 'Retired|9999')).toBe('Survivor|9999')
+    })
+  })
+
+  describe('findAccountByProviderPrefix', () => {
+    // Net-worth rows show shortened provider names ("Example Bank", or
+    // "Example Bank Pe...") where transactions carry the full one
+    // ("Example Bank Personal"), so the derived ids differ.
+    beforeEach(() => {
+      upsertAccount(db, { id: 'Example Bank Personal|5403', name: 'Checking', providerName: 'Example Bank Personal', display: 'Bank (..5403)' })
+    })
+
+    it('finds the account whose provider starts with the shortened name, same last4', () => {
+      expect(findAccountByProviderPrefix(db, 'Example Bank', '5403')).toBe('Example Bank Personal|5403')
+    })
+
+    it('strips a truncation ellipsis and ignores case and padding', () => {
+      expect(findAccountByProviderPrefix(db, '  EXAMPLE BANK PE...', '5403')).toBe('Example Bank Personal|5403')
+      expect(findAccountByProviderPrefix(db, 'Example Bank Pe…', '5403')).toBe('Example Bank Personal|5403')
+    })
+
+    it('also matches when the row shows the LONGER name', () => {
+      upsertAccount(db, { id: 'Sample|7777', name: 's', providerName: 'Sample', display: 'Card (..7777)' })
+      expect(findAccountByProviderPrefix(db, 'Sample Credit Union', '7777')).toBe('Sample|7777')
+    })
+
+    it('returns null for a different last4, a missing last4, or an empty name', () => {
+      expect(findAccountByProviderPrefix(db, 'Example Bank', '0000')).toBeNull()
+      expect(findAccountByProviderPrefix(db, 'Example Bank', null)).toBeNull()
+      expect(findAccountByProviderPrefix(db, '...', '5403')).toBeNull()
+    })
+
+    it('returns null when the prefix fits more than one account — never guesses', () => {
+      upsertAccount(db, { id: 'Example Bank Business|5403', name: 'Biz', providerName: 'Example Bank Business', display: 'Bank (..5403)' })
+      expect(findAccountByProviderPrefix(db, 'Example Bank', '5403')).toBeNull()
+    })
+
+    it('ignores credit-report rows', () => {
+      db.prepare("UPDATE accounts SET balance_source = 'credit_report' WHERE id = 'Example Bank Personal|5403'").run()
+      expect(findAccountByProviderPrefix(db, 'Example Bank', '5403')).toBeNull()
     })
   })
 

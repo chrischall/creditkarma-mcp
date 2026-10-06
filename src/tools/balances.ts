@@ -68,11 +68,17 @@ async function refreshLinked(ctx: AppContext, syncedAt: string) {
   const token = parseIdxAuthToken(await ctx.client.runOperation(OPERATIONS.idxAuth, IDX_AUTH_VARIABLES))
   const accounts = parseVaultAccounts(await searchVaultConnections(token))
 
+  // Every account the vault returned is still linked, balance or not. A blank
+  // balance (`""`) only means none this time: keep the stored one, which then
+  // ages into `stale`, rather than retiring the account as if it had gone.
+  const stillLinked: string[] = []
   const rows: LinkedBalanceRow[] = []
   for (const a of accounts) {
+    const id = accountIdFor(ctx.db, a)
+    stillLinked.push(id)
     if (a.balance === null) continue
     rows.push({
-      id: accountIdFor(ctx.db, a),
+      id,
       urn: a.urn,
       name: a.name,
       provider: a.provider,
@@ -89,13 +95,13 @@ async function refreshLinked(ctx: AppContext, syncedAt: string) {
   let removed = 0
   inTransaction(ctx.db, () => {
     rows.forEach(r => setLinkedBalance(ctx.db, r))
-    removed = pruneLinkedAccounts(ctx.db, rows.map(r => r.id))
+    removed = pruneLinkedAccounts(ctx.db, stillLinked)
   })
   return { updated: rows.length, no_balance: accounts.length - rows.length, removed }
 }
 
 /**
- * The row a vault account's balance belongs on: the one already holding its
+ * The row a vault account belongs on: the one already holding its
  * URN (transactions carry the same URN), else a URN-less transaction account
  * with the same institution and last4, else a new row keyed by the URN.
  */

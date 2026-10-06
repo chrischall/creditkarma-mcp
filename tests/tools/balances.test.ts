@@ -129,6 +129,33 @@ describe('refreshBalances', () => {
     expect(row('Old|1')).toBeUndefined()
   })
 
+  it('keeps the last known balance — going stale, not vanishing — when the vault returns that account with no balance', async () => {
+    setLinkedBalance(ctx.db, {
+      id: URN('chk'), urn: URN('chk'), name: 'Everyday Checking', provider: 'Example Bank', last4: '1234', type: 'CHECKING',
+      balance: 480, creditLimit: null, availableCredit: null, asOf: '2024-02-01T00:00:00Z', syncedAt: 'earlier',
+    })
+    stubCk(ctx, ck())
+    stubVault([vaultConnection('Example Bank', [vaultAccount({ urn: URN('chk'), masked: 'XXXX1234', balance: '' })])])
+
+    const report = await refreshBalances(ctx, NOW)
+
+    expect(report.linked).toEqual({ ok: true, updated: 0, no_balance: 1, removed: 0 })
+    expect(row(URN('chk'))).toMatchObject({ current_balance: 480, balance_as_of: '2024-02-01T00:00:00Z', balance_source: 'linked' })
+  })
+
+  it('keeps a balance stored on a transaction account when the vault returns it blank', async () => {
+    upsertAccount(ctx.db, { id: 'Example Bank|1234', name: 'Checking', providerName: 'Example Bank', display: 'Bank (..1234)' })
+    attachUrn(ctx.db, 'Example Bank|1234', URN('chk'))
+    setLinkedBalance(ctx.db, {
+      id: 'Example Bank|1234', urn: URN('chk'), name: 'Checking', provider: 'Example Bank', last4: '1234', type: 'CHECKING',
+      balance: 480, creditLimit: null, availableCredit: null, asOf: '2024-02-01T00:00:00Z', syncedAt: 'earlier',
+    })
+    stubCk(ctx, ck())
+    stubVault([vaultConnection('Example Bank', [vaultAccount({ urn: URN('chk'), balance: '' })])])
+    await refreshBalances(ctx, NOW)
+    expect(row('Example Bank|1234')).toMatchObject({ current_balance: 480, balance_source: 'linked' })
+  })
+
   it('reports — not throws — when idxAuth refuses, leaving stored linked balances alone', async () => {
     setLinkedBalance(ctx.db, {
       id: 'Kept|1', urn: URN('kept'), name: 'K', provider: 'K', last4: null, type: 'SAVINGS',

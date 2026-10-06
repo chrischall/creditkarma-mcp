@@ -10,8 +10,10 @@
  * headless 2026-10-06: idxAuth (client `idx-gateway`) → 200, 11 connections,
  * 30 accounts, all URN-keyed, 29 with a per-account refresh time.
  *
- * Undocumented and Intuit's, not CK's — so callers fall back to the net-worth
- * pages when anything here fails.
+ * Undocumented and Intuit's, not CK's. When anything here fails, the balance
+ * refresh reports `linked: { ok: false, error }` and leaves the stored linked
+ * balances as they were (they then age into `stale`); the credit-report source
+ * is unaffected.
  */
 import { randomUUID } from 'node:crypto'
 import { truncateErrorMessage, detectEdgeBlock, EdgeBlockedError } from '@chrischall/mcp-utils'

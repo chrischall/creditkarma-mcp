@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.1](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.0...v3.3.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **deps:** pick up fetchproxy 3.6.0 relay protocol fixes and awaiting-approval retry ([#236](https://github.com/chrischall/creditkarma-mcp/issues/236)) ([9d9e18d](https://github.com/chrischall/creditkarma-mcp/commit/9d9e18d7b138550641e6eadaa8fecfa4f95ccf73))
+
 ## [3.3.0](https://github.com/chrischall/creditkarma-mcp/compare/v3.2.0...v3.3.0) (2026-10-06)
 
 

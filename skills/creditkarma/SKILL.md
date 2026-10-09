@@ -97,7 +97,7 @@ The MCP handles auth automatically once any of the three paths is configured.
 | Tool | Description |
 |------|-------------|
 | `ck_list_transactions(start_date?, end_date?, account?, category?, merchant?, status?, min_amount?, max_amount?, limit?, offset?)` | Filtered, paginated transaction list |
-| `ck_get_recent_transactions(limit?)` | N most recent transactions (default 20) |
+| `ck_get_recent_transactions(limit?)` | N most recent transactions (default 25; `limit` tops out at 500 on every listing tool) |
 | `ck_get_spending_by_category(start_date?, end_date?)` | Spending totals grouped by category |
 | `ck_get_spending_by_merchant(start_date?, end_date?, limit?)` | Spending totals grouped by merchant |
 | `ck_get_account_summary` | Transaction counts and totals per account |

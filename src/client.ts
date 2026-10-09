@@ -139,6 +139,15 @@ export const OPERATIONS = {
 const NO_QUERY_FOUND = Symbol('NO_QUERY_FOUND')
 export const CK_REFRESH_ENDPOINT = 'https://www.creditkarma.com/member/oauth2/refresh'
 
+/**
+ * Abort deadline for every Credit Karma / Intuit request (GraphQL, token
+ * refresh, vault search). Without one a hung CK or Akamai connection left
+ * ck_sync_transactions pending until the host timed the whole call out
+ * (fleet-audit#389). Hash discovery has its own shared budget
+ * (`DISCOVERY_TIMEOUT_MS` in src/queryHash.ts).
+ */
+export const REQUEST_TIMEOUT_MS = 30_000
+
 export interface TransactionPage {
   transactions: ApiTransaction[]
   pageInfo: {
@@ -534,7 +543,8 @@ export class CreditKarmaClient {
     const res = await fetch(CK_REFRESH_ENDPOINT, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ refreshToken: this.refreshToken })
+      body: JSON.stringify({ refreshToken: this.refreshToken }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
 
     if (!res.ok) {
@@ -581,7 +591,8 @@ export class CreditKarmaClient {
         'Referer': 'https://www.creditkarma.com/',
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
   }
 }

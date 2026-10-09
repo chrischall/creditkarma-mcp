@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { rawTextResult, parseCookieHeader, minifiedResult, readEnvVar } from '@chrischall/mcp-utils'
+import { rawTextResult, minifiedResult, readEnvVar } from '@chrischall/mcp-utils'
+import { splitCkatCookie } from '../auth.js'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import { isJwtExpired } from '../client.js'
@@ -15,11 +16,7 @@ export async function handleSetSession(args: SetSessionArgs, ctx: AppContext): P
   // request (`CKTRKID=...; CKAT=eyJ...%3BeyJ...; ...`). The parser remains
   // lenient and also accepts a bare CKAT value or `CKAT=<value>` for callers
   // that lifted just the cookie value from DevTools.
-  const ckat = parseCookieHeader(args.cookies)['CKAT'] ?? args.cookies.trim()
-
-  const parts = ckat.replace('%3B', ';').split(';')
-  const accessToken = parts[0]?.trim()
-  const refreshToken = parts[1]?.trim() ?? null
+  const { accessToken, refreshToken } = splitCkatCookie(args.cookies)
 
   if (!accessToken) return 'Session not saved: could not extract a token from the provided value.'
 

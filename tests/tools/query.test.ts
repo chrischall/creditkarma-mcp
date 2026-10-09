@@ -3,7 +3,8 @@ import { initDb, upsertAccount, upsertCategory, upsertMerchant, upsertTransactio
 import {
   handleListTransactions, handleGetRecentTransactions,
   handleGetSpendingByCategory, handleGetSpendingByMerchant, handleGetAccountSummary,
-  registerQueryTools
+  registerQueryTools,
+  MAX_QUERY_LIMIT,
 } from '../../src/tools/query.js'
 import { CreditKarmaClient } from '../../src/client.js'
 import type { AppContext } from '../../src/index.js'
@@ -332,6 +333,22 @@ describe('registerQueryTools', () => {
     for (const c of calls) {
       expect((c.opts.annotations as { readOnlyHint: boolean })?.readOnlyHint).toBe(true)
     }
+  })
+
+  it('bounds limit/offset so limit:-1 cannot dump the whole history (fleet-audit#389)', () => {
+    const { server, calls } = fakeServer()
+    registerQueryTools(server, ctx)
+    for (const name of ['ck_list_transactions', 'ck_get_recent_transactions', 'ck_get_spending_by_merchant']) {
+      const schema = calls.find(c => c.name === name)!.opts.inputSchema
+      expect(schema.safeParse({ limit: -1 }).success, `${name} limit -1`).toBe(false)
+      expect(schema.safeParse({ limit: 0 }).success, `${name} limit 0`).toBe(false)
+      expect(schema.safeParse({ limit: 1.5 }).success, `${name} limit 1.5`).toBe(false)
+      expect(schema.safeParse({ limit: MAX_QUERY_LIMIT + 1 }).success, `${name} over max`).toBe(false)
+      expect(schema.safeParse({ limit: MAX_QUERY_LIMIT }).success, `${name} at max`).toBe(true)
+    }
+    const list = calls.find(c => c.name === 'ck_list_transactions')!.opts.inputSchema
+    expect(list.safeParse({ offset: -1 }).success).toBe(false)
+    expect(list.safeParse({ offset: 0 }).success).toBe(true)
   })
 
   it('list handler returns JSON-stringified rows', async () => {

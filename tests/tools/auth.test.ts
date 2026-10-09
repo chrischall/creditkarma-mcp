@@ -109,6 +109,13 @@ describe('ck_set_session', () => {
     expect(ctx.client.getToken()).toBeNull()
   })
 
+  it('refuses a Cookie header that has no CKAT cookie (fleet-audit#388)', async () => {
+    const result = await handleSetSession({ cookies: 'CKTRKID=abc; foo=bar' }, ctx)
+    expect(result).toMatch(/could not extract/i)
+    expect(ctx.client.getToken()).toBeNull()
+    expect(existsSync(sessionFile)).toBe(false)
+  })
+
   it('says the session is in memory only when it cannot be saved', async () => {
     // A parent that is a FILE cannot be created as a directory.
     writeFileSync(join(tmpDir, 'blocker'), 'x')

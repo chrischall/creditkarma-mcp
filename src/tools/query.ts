@@ -252,6 +252,17 @@ export async function handleGetAccountSummary(
 // Registration
 // ---------------------------------------------------------------------------
 
+/**
+ * Ceiling on the `limit` argument of the listing tools. SQLite reads a negative
+ * LIMIT as "no limit", so an unbounded schema let `limit: -1` dump the whole
+ * financial history into the model's context (fleet-audit#389). Page past it
+ * with `offset`, or aggregate with ck_query_sql.
+ */
+export const MAX_QUERY_LIMIT = 500
+
+const limitArg = (dflt: number) =>
+  z.number().int().min(1).max(MAX_QUERY_LIMIT).optional().describe(`Default ${dflt}, max ${MAX_QUERY_LIMIT}`)
+
 export function registerQueryTools(server: McpServer, ctx: AppContext): void {
   server.registerTool(
     'ck_list_transactions',
@@ -267,8 +278,8 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
         status: z.string().optional().describe('e.g. posted, pending, cancelled'),
         min_amount: z.number().optional().describe('Minimum absolute amount'),
         max_amount: z.number().optional().describe('Maximum absolute amount'),
-        limit: z.number().optional().describe('Default 50'),
-        offset: z.number().optional().describe('Default 0'),
+        limit: limitArg(50),
+        offset: z.number().int().min(0).optional().describe('Default 0'),
       }),
     },
     async (args) => {
@@ -283,7 +294,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
       description: 'Return the N most recent transactions. Convenience shortcut for ck_list_transactions.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        limit: z.number().optional().describe('Number of transactions to return (default 25)'),
+        limit: limitArg(25).describe(`Number of transactions to return (default 25, max ${MAX_QUERY_LIMIT})`),
       }),
     },
     async (args) => {
@@ -318,7 +329,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),
         category: z.string().optional().describe('Partial category name filter'),
-        limit: z.number().optional().describe('Default 25'),
+        limit: limitArg(25),
       }),
     },
     async (args) => {

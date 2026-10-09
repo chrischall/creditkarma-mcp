@@ -320,16 +320,16 @@ export function resolveLocalAuth(opts: ResolveOptions = {}): ResolvedAuth | null
 
 /**
  * Split a Cookie header into the CK_COOKIES → (accessToken, refreshToken)
- * shape — the one parser shared by `src/index.ts`, `src/tools/auth.ts` and
- * the healthcheck. The CKAT cookie
- * value is `<accessJWT>%3B<refreshJWT>` URL-encoded; we split on either
- * the encoded or literal semicolon. (CK-specific — the generic name→value
- * parse is mcp-utils' `parseCookieHeader`.)
+ * shape. The CKAT cookie value is `<accessJWT>%3B<refreshJWT>` URL-encoded;
+ * we split on either the encoded or literal semicolon. (CK-specific — the
+ * generic name→value parse is mcp-utils' `parseCookieHeader`.)
  *
- * Exported so both `src/index.ts` (startup) and `loadAuthIntoClient()`
- * (lazy bootstrap) can share one parser. Returns nulls (not errors) when
- * the input doesn't contain a CKAT — the caller decides whether absence
- * is fatal.
+ * The one CKAT parser: startup (`src/index.ts`), `ck_set_session`
+ * (`src/tools/auth.ts`) and `ck_healthcheck` (`src/tools/healthcheck.ts`)
+ * import it, and in this file `applyCookiesToClient()` (so the lazy
+ * `loadAuthIntoClient()` bootstrap) and `resolveLocalAuth()`'s candidate
+ * ranking use it. Returns nulls (not errors) when the input doesn't contain
+ * a CKAT — the caller decides whether absence is fatal.
  */
 export function splitCkatCookie(cookies: string): {
   accessToken: string | null

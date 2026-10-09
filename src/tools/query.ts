@@ -260,8 +260,10 @@ export async function handleGetAccountSummary(
  */
 export const MAX_QUERY_LIMIT = 500
 
+const LIMIT_RANGE = `a whole number from 1 to ${MAX_QUERY_LIMIT}`
+
 const limitArg = (dflt: number) =>
-  z.number().int().min(1).max(MAX_QUERY_LIMIT).optional().describe(`Default ${dflt}, max ${MAX_QUERY_LIMIT}`)
+  z.number().int().min(1).max(MAX_QUERY_LIMIT).optional().describe(`Default ${dflt}; ${LIMIT_RANGE}`)
 
 export function registerQueryTools(server: McpServer, ctx: AppContext): void {
   server.registerTool(
@@ -279,7 +281,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
         min_amount: z.number().optional().describe('Minimum absolute amount'),
         max_amount: z.number().optional().describe('Maximum absolute amount'),
         limit: limitArg(50),
-        offset: z.number().int().min(0).optional().describe('Default 0'),
+        offset: z.number().int().min(0).optional().describe('Default 0; a whole number, 0 or more'),
       }),
     },
     async (args) => {
@@ -294,7 +296,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
       description: 'Return the N most recent transactions. Convenience shortcut for ck_list_transactions.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        limit: limitArg(25).describe(`Number of transactions to return (default 25, max ${MAX_QUERY_LIMIT})`),
+        limit: limitArg(25).describe(`Number of transactions to return (default 25; ${LIMIT_RANGE})`),
       }),
     },
     async (args) => {

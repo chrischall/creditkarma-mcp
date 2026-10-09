@@ -418,10 +418,12 @@ export function registerSyncTools(server: McpServer, ctx: AppContext): void {
         'balances once (see ck_get_account_balances; a balance failure is reported in `balances`, ' +
         'never thrown; a call that pauses with more to fetch leaves balances to the call that finishes). ' +
         'Incremental by default (fetches since last sync + 30-day overlap for updates). ' +
-        'If no valid token, initiates the login/MFA flow automatically. ' +
+        'There is no login flow: credentials are re-read from the saved session (ck_set_session), ' +
+        'CK_COOKIES, or a signed-in creditkarma.com tab via the ContextMint Bridge extension; ' +
+        'if none is usable it fails with an error saying how to sign back in. ' +
         'Bounded and resumable: when it pauses with more to fetch it returns ' +
         'another_run_needed:true and a note — run it again and it continues from where it stopped.',
-      annotations: { readOnlyHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: z.object({
         force_full: z.boolean().optional().describe(
           'If true, walk the whole history with no date cutoff. Starts from the beginning, ' +

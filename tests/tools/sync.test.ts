@@ -638,6 +638,22 @@ describe('registerSyncTools', () => {
     expect(calls[0].opts.inputSchema.shape).toHaveProperty('force_full')
   })
 
+  it('describes the real credential path and sets full annotations (fleet-audit#392)', () => {
+    const { server, calls } = fakeServer()
+    registerSyncTools(server, ctx)
+    const { description, annotations } = calls[0].opts
+    // There is no login/MFA flow — the tool re-reads cookies (saved session,
+    // CK_COOKIES, or the ContextMint Bridge extension) or fails.
+    expect(description).not.toMatch(/MFA|initiates the login/i)
+    expect(description).toMatch(/ck_set_session|ContextMint Bridge/)
+    expect(annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    })
+  })
+
   it('wraps the SyncResult as JSON-stringified MCP text content', async () => {
     vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([makeTx('tx1', '2024-02-10')]))
     const { server, calls } = fakeServer()

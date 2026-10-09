@@ -139,10 +139,20 @@ describe('initDb — file permissions hardening', () => {
     expect(statSync(dbPath).mode & 0o777).toBe(0o600)
   })
 
-  it('sets the parent directory to mode 0700', () => {
+  it('sets a parent directory it created to mode 0700', () => {
+    const nested = join(tmpDir, 'new-dir', 'transactions.db')
+    const db = initDb(nested)
+    db.close()
+    expect(statSync(join(tmpDir, 'new-dir')).mode & 0o777).toBe(0o700)
+  })
+
+  it('leaves a user-chosen existing directory alone (fleet-audit#387)', () => {
+    // CK_DB_PATH=~/Documents/ck.db must not turn ~/Documents into 0700.
+    chmodSync(tmpDir, 0o755)
     const db = initDb(dbPath)
     db.close()
-    expect(statSync(tmpDir).mode & 0o777).toBe(0o700)
+    expect(statSync(tmpDir).mode & 0o777).toBe(0o755)
+    expect(statSync(dbPath).mode & 0o777).toBe(0o600)
   })
 
   it('chmods -wal and -shm sidecar files to 0600 when they exist', () => {
@@ -155,14 +165,18 @@ describe('initDb — file permissions hardening', () => {
   })
 
   it('re-asserts hardened modes when reopening a DB with loose permissions', () => {
-    const db1 = initDb(dbPath)
+    // The app's own directory (the default ~/.creditkarma-mcp) is re-hardened
+    // on every open even though it already exists.
+    const appDir = join(tmpDir, '.creditkarma-mcp')
+    const appDb = join(appDir, 'transactions.db')
+    const db1 = initDb(appDb)
     db1.close()
-    chmodSync(dbPath, 0o644)
-    chmodSync(tmpDir, 0o755)
-    const db2 = initDb(dbPath)
+    chmodSync(appDb, 0o644)
+    chmodSync(appDir, 0o755)
+    const db2 = initDb(appDb)
     db2.close()
-    expect(statSync(dbPath).mode & 0o777).toBe(0o600)
-    expect(statSync(tmpDir).mode & 0o777).toBe(0o700)
+    expect(statSync(appDb).mode & 0o777).toBe(0o600)
+    expect(statSync(appDir).mode & 0o777).toBe(0o700)
   })
 
   it('tolerates absent -wal/-shm sidecar files', () => {

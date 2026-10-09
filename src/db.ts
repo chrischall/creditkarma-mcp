@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, chmodSync, existsSync } from 'fs'
-import { dirname } from 'path'
+import { dirname, basename } from 'path'
 import { deriveAccountId, parseLast4 } from './accountId.js'
 import type { CreditReportAccount } from './creditReport.js'
 import type { BalanceSnapshot } from './matching.js'
@@ -179,8 +179,15 @@ function mergeProviderVariants(db: Database): void {
 }
 
 export function initDb(dbPath: string): Database {
+  // Only a directory this app owns is hardened to 0700: one initDb just
+  // created, or the app's own `.creditkarma-mcp` directory (the default).
+  // CK_DB_PATH can point anywhere, and chmodding the user's ~/Documents or a
+  // shared /tmp is not ours to do (fleet-audit#387).
+  let hardenDir = false
   if (dbPath !== ':memory:') {
-    mkdirSync(dirname(dbPath), { recursive: true })
+    const dir = dirname(dbPath)
+    const created = mkdirSync(dir, { recursive: true, mode: 0o700 })
+    hardenDir = created !== undefined || basename(dir) === APP_DIR_NAME
   }
 
   const db = new DatabaseSync(dbPath)
@@ -207,26 +214,44 @@ export function initDb(dbPath: string): Database {
   }
 
   if (dbPath !== ':memory:') {
-    hardenDbPermissions(dbPath)
+    hardenDbPermissions(dbPath, { hardenDir })
   }
 
   return db
 }
 
 /**
- * Assert hardened modes on the DB and its parent directory (0700 dir / 0600
- * files) on every open — SQLite creates files with default (world-readable)
+ * Assert hardened modes on the DB (0600 files) and, when `hardenDir` is set,
+ * its parent directory (0700) on every open — SQLite creates files with default (world-readable)
  * permissions, and modes set at creation don't help pre-existing files.
  * Mirrors `SessionStore.saveToDisk` in @chrischall/mcp-utils. The `-wal`/`-shm`
  * sidecars may not exist yet (they appear on first use), so they're chmodded
  * only when present. Exported for direct testing.
  */
-export function hardenDbPermissions(dbPath: string): void {
-  chmodSync(dirname(dbPath), 0o700)
-  chmodSync(dbPath, 0o600)
+export function hardenDbPermissions(dbPath: string, opts: { hardenDir?: boolean } = {}): void {
+  if (opts.hardenDir) tryChmod(dirname(dbPath), 0o700)
+  tryChmod(dbPath, 0o600)
   for (const suffix of ['-wal', '-shm']) {
     const sidecar = `${dbPath}${suffix}`
-    if (existsSync(sidecar)) chmodSync(sidecar, 0o600)
+    if (existsSync(sidecar)) tryChmod(sidecar, 0o600)
+  }
+}
+
+/** The app's own data directory name (`~/.creditkarma-mcp`). */
+const APP_DIR_NAME = '.creditkarma-mcp'
+
+/**
+ * chmod, but a refusal (EPERM on a path the user doesn't own, a read-only
+ * mount, …) is a stderr warning rather than an exception: hardening is
+ * best-effort, and throwing here would stop the server before it answers
+ * tools/list (fleet-audit#387). stdout is the JSON-RPC stream.
+ */
+function tryChmod(path: string, mode: number): void {
+  try {
+    chmodSync(path, mode)
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    console.error(`[creditkarma-mcp] Warning: could not set permissions on ${path} — ${reason}`)
   }
 }
 

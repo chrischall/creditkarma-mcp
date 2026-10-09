@@ -16,7 +16,7 @@ vi.mock('@fetchproxy/bootstrap', () => ({
   bootstrap: (...args: unknown[]) => bootstrapMock(...args),
 }))
 
-import { resolveAuth, resolveLocalAuth, splitCkatCookie, loadAuthIntoClient } from '../src/auth.js'
+import { resolveAuth, resolveLocalAuth, splitCkatCookie, loadAuthIntoClient, applyCookiesToClient } from '../src/auth.js'
 import { CreditKarmaClient } from '../src/client.js'
 import { CkAuthError, isCkAuthError } from '../src/authError.js'
 import { makeJwt } from './helpers.js'
@@ -587,6 +587,21 @@ describe('splitCkatCookie', () => {
       accessToken: 'acc',
       refreshToken: 'ref',
     })
+  })
+
+  it('returns nulls for a Cookie header with no CKAT cookie (fleet-audit#388)', () => {
+    // Without the guard the whole header fell through as a "bare CKAT value"
+    // and an unrelated cookie was sent as the Bearer token.
+    expect(splitCkatCookie('CKTRKID=abc; foo=bar')).toEqual({
+      accessToken: null,
+      refreshToken: null,
+    })
+  })
+
+  it('applyCookiesToClient raises no_credentials for a header with no CKAT (fleet-audit#388)', () => {
+    const client = new CreditKarmaClient()
+    expect(() => applyCookiesToClient(client, 'CKTRKID=abc; foo=bar')).toThrow(/did not contain a CKAT/)
+    expect(client.getToken()).toBeNull()
   })
 
   it('returns nulls for an empty input', () => {

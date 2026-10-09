@@ -320,7 +320,8 @@ export function resolveLocalAuth(opts: ResolveOptions = {}): ResolvedAuth | null
 
 /**
  * Split a Cookie header into the CK_COOKIES → (accessToken, refreshToken)
- * shape, mirroring `src/index.ts` and `src/tools/auth.ts`. The CKAT cookie
+ * shape — the one parser shared by `src/index.ts`, `src/tools/auth.ts` and
+ * the healthcheck. The CKAT cookie
  * value is `<accessJWT>%3B<refreshJWT>` URL-encoded; we split on either
  * the encoded or literal semicolon. (CK-specific — the generic name→value
  * parse is mcp-utils' `parseCookieHeader`.)
@@ -334,7 +335,12 @@ export function splitCkatCookie(cookies: string): {
   accessToken: string | null
   refreshToken: string | null
 } {
-  const ckat = parseCookieHeader(cookies)['CKAT'] ?? cookies.trim()
+  // A bare CKAT value (`<access>%3B<refresh>`, or with a literal `;`) has no
+  // `=` — JWTs are base64url, unpadded. Anything with an `=` and no CKAT
+  // cookie is a header for the wrong thing; treating it as a bare value would
+  // send an unrelated cookie as the Bearer token (fleet-audit#388).
+  const raw = cookies.trim()
+  const ckat = parseCookieHeader(cookies)['CKAT'] ?? (raw.includes('=') ? '' : raw)
   const parts = ckat.replace('%3B', ';').split(';')
   const accessToken = parts[0]?.trim() || null
   const refreshToken = parts[1]?.trim() || null

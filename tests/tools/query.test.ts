@@ -351,6 +351,17 @@ describe('registerQueryTools', () => {
     expect(list.safeParse({ offset: 0 }).success).toBe(true)
   })
 
+  it('tells callers the exact limit/offset contract the schema enforces', () => {
+    const { server, calls } = fakeServer()
+    registerQueryTools(server, ctx)
+    for (const name of ['ck_list_transactions', 'ck_get_recent_transactions', 'ck_get_spending_by_merchant']) {
+      const shape = calls.find(c => c.name === name)!.opts.inputSchema.shape
+      expect(shape.limit.description, `${name} limit`).toContain(`whole number from 1 to ${MAX_QUERY_LIMIT}`)
+    }
+    const list = calls.find(c => c.name === 'ck_list_transactions')!.opts.inputSchema.shape
+    expect(list.offset.description).toContain('whole number, 0 or more')
+  })
+
   it('list handler returns JSON-stringified rows', async () => {
     const { server, calls } = fakeServer()
     registerQueryTools(server, ctx)

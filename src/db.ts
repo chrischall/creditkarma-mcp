@@ -286,6 +286,24 @@ export interface TransactionRow {
   rawJson: string | null
 }
 
+/**
+ * Delete pending transactions a completed sync walk did not see again
+ * (fleet-audit#390). A pending charge that posts under a new id, or is
+ * cancelled and dropped, otherwise lingers forever and is counted twice by
+ * the spending aggregates. Only pending rows are touched — a posted row is
+ * history — and only those dated on/after `sinceDate` (the start of the window
+ * the walk re-read; null = the walk covered everything). Returns the count.
+ */
+export function prunePendingTransactions(db: Database, seenIds: Iterable<string>, sinceDate: string | null): number {
+  const result = db.prepare(`
+    DELETE FROM transactions
+    WHERE LOWER(status) = 'pending'
+      AND (? IS NULL OR date >= ?)
+      AND id NOT IN (SELECT value FROM json_each(?))
+  `).run(sinceDate, sinceDate, JSON.stringify([...seenIds]))
+  return Number(result.changes)
+}
+
 export function upsertAccount(db: Database, row: AccountRow): void {
   // Balance columns are deliberately untouched: they belong to the balance
   // sync, and a transaction page re-upserting metadata must not wipe them.

@@ -4,7 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import {
   upsertAccount, upsertCategory, upsertMerchant, upsertTransaction,
-  getSyncState, setSyncState, resolveAccountId, attachUrn
+  getSyncState, setSyncState, resolveAccountId, attachUrn, prunePendingTransactions
 } from '../db.js'
 import { deriveAccountId } from '../accountId.js'
 import { loadAuthIntoClient } from '../auth.js'
@@ -176,6 +176,11 @@ export async function handleSyncTransactions(
     ? undefined
     : savedCursor
 
+  // Pruning vanished pending rows needs proof the walk re-read the whole
+  // window: it must start at page 1, not mid-history from a checkpoint.
+  const walkedFromStart = cursor === undefined
+  const seenIds = new Set<string>()
+
   let newCount = 0
   let updatedCount = 0
   let totalCount = 0
@@ -260,6 +265,7 @@ export async function handleSyncTransactions(
           rawJson: JSON.stringify(tx)
         })
 
+        seenIds.add(tx.id)
         if (exists) { updatedCount++ } else { newCount++ }
         totalCount++
       }
@@ -293,6 +299,11 @@ export async function handleSyncTransactions(
   // cap path already checkpointed it) so the next run resumes. Only a fully
   // drained sync advances last_sync_date and clears the resume cursor.
   if (!stopped) {
+    // A complete walk from page 1 re-read every transaction from today down to
+    // the cutoff (or all of them), so a pending row in that window it did not
+    // see was removed or re-issued upstream (fleet-audit#390). An empty answer
+    // proves nothing, so it never prunes.
+    if (walkedFromStart && seenIds.size > 0) prunePendingTransactions(ctx.db, seenIds, cutoffDate)
     setSyncState(ctx.db, 'last_sync_date', today)
     // Clear resume cursor on success
     ctx.db.prepare("DELETE FROM sync_state WHERE key IN ('last_cursor', 'resume_mode', 'resume_paused')").run()

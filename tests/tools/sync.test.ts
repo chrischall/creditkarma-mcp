@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { handleSyncTransactions, registerSyncTools } from '../../src/tools/sync.js'
 import { CreditKarmaClient } from '../../src/client.js'
-import { initDb, getSyncState, setSyncState } from '../../src/db.js'
+import { initDb, getSyncState, setSyncState, upsertTransaction } from '../../src/db.js'
 import type { AppContext } from '../../src/index.js'
 import type { TransactionPage } from '../../src/client.js'
 import { fakeServer } from '../helpers.js'
@@ -78,6 +78,62 @@ describe('ck_sync_transactions', () => {
     const second = await handleSyncTransactions({ force_full: true }, ctx) as { new: number; updated: number }
     expect(second.new).toBe(0)
     expect(second.updated).toBe(1)
+  })
+
+  describe('pending transactions that vanish upstream (fleet-audit#390)', () => {
+    const ids = () => (ctx.db.prepare('SELECT id FROM transactions ORDER BY id').all() as Array<{ id: string }>).map(r => r.id)
+
+    it('a completed full walk deletes pending rows CK no longer returns', async () => {
+      vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([
+        makeTx('pend', '2024-02-10', { status: 'pending' }),
+        makeTx('old', '2024-01-05'),
+      ]))
+      await handleSyncTransactions({}, ctx)
+      expect(ids()).toEqual(['old', 'pend'])
+
+      // The pending charge posted under a new id; the old id is gone upstream.
+      vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([
+        makeTx('posted', '2024-02-11'),
+        makeTx('old', '2024-01-05'),
+      ]))
+      await handleSyncTransactions({ force_full: true }, ctx)
+      expect(ids()).toEqual(['old', 'posted'])
+    })
+
+    it('an incremental walk only prunes pending rows inside the window it re-read', async () => {
+      upsertTransaction(ctx.db, { id: 'ancient-pending', date: '2023-06-01', description: 'x', status: 'pending', amount: -5, accountId: null, categoryId: null, merchantId: null, rawJson: null })
+      upsertTransaction(ctx.db, { id: 'recent-pending', date: '2024-02-05', description: 'x', status: 'PENDING', amount: -5, accountId: null, categoryId: null, merchantId: null, rawJson: null })
+      upsertTransaction(ctx.db, { id: 'recent-posted', date: '2024-02-06', description: 'x', status: 'posted', amount: -5, accountId: null, categoryId: null, merchantId: null, rawJson: null })
+      setSyncState(ctx.db, 'last_sync_date', '2024-02-01') // cutoff 2024-01-02
+      vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([
+        makeTx('fresh', '2024-02-12'),
+        makeTx('below-cutoff', '2023-12-20'),
+      ]))
+      await handleSyncTransactions({}, ctx)
+      // recent-pending was in the re-read window and not returned → gone.
+      // ancient-pending is older than the window, so its absence proves nothing.
+      // Posted rows are never pruned.
+      expect(ids()).toEqual(['ancient-pending', 'below-cutoff', 'fresh', 'recent-posted'])
+    })
+
+    it('keeps pending rows when the walk paused, resumed mid-history, or came back empty', async () => {
+      upsertTransaction(ctx.db, { id: 'pend', date: '2024-02-10', description: 'x', status: 'pending', amount: -5, accountId: null, categoryId: null, merchantId: null, rawJson: null })
+
+      // Paused by max_pages: the rest of the window is unseen.
+      vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([makeTx('a', '2024-02-12')], true, 'c1'))
+      await handleSyncTransactions({ max_pages: 1 }, ctx)
+      expect(ids()).toContain('pend')
+
+      // Resumed from that checkpoint: pages before the cursor were not re-read.
+      vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([makeTx('b', '2024-01-01')]))
+      await handleSyncTransactions({}, ctx)
+      expect(ids()).toContain('pend')
+
+      // An empty answer is not evidence that everything was removed.
+      vi.spyOn(ctx.client, 'fetchPage').mockResolvedValueOnce(makePage([]))
+      await handleSyncTransactions({ force_full: true }, ctx)
+      expect(ids()).toContain('pend')
+    })
   })
 
   it('saves last_sync_date after sync', async () => {

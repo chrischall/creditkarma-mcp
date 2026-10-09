@@ -77,7 +77,7 @@ export function registerSqlTools(server: McpServer, ctx: AppContext): void {
         'Non-SELECT statements (INSERT, UPDATE, DELETE, DROP, etc.) are rejected. ' +
         `Returns at most max_rows rows (default ${DEFAULT_MAX_ROWS}, max ${MAX_ROWS_LIMIT}); a larger result comes back with truncated: true, so prefer aggregates or LIMIT/OFFSET paging. ` +
         'Tables: transactions, accounts, categories, merchants, sync_state.',
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({
         sql: z.string().describe('A SELECT SQL statement'),
         max_rows: z.number().int().min(1).max(MAX_ROWS_LIMIT).optional()

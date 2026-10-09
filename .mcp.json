@@ -1,8 +1,10 @@
 {
   "mcpServers": {
     "creditkarma": {
-      "command": "/opt/homebrew/bin/node",
-      "args": ["dist/index.js"],
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/dist/index.js"
+      ],
       "env": {
         "CK_COOKIES": "",
         "CK_DB_PATH": ""

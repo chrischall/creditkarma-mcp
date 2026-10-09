@@ -360,7 +360,7 @@ describe('ck_get_account_balances', () => {
     expect(calls.map(c => c.name)).toEqual(['ck_get_account_balances'])
     expect(calls[0].opts.inputSchema.shape).toHaveProperty('refresh')
     expect(calls[0].opts.inputSchema.shape).toHaveProperty('include_matched')
-    expect(calls[0].opts.annotations).toEqual({ readOnlyHint: false, idempotentHint: true })
+    expect(calls[0].opts.annotations).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true })
     const body = JSON.parse((await calls[0].handler({})).content[0].text)
     expect(body.accounts).toHaveLength(5)
   })

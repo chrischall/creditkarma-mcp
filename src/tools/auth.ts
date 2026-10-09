@@ -85,7 +85,7 @@ export function registerAuthTools(server: McpServer, ctx: AppContext): void {
     'ck_set_session',
     {
       description: 'Store a Credit Karma session to enable automatic token refresh. Pass the full Cookie header from a signed-in creditkarma.com request (Chrome DevTools \u2192 Network \u2192 any creditkarma.com request \u2192 Request Headers \u2192 right-click the `cookie` header \u2192 Copy value). For most users the easier onboarding path is to install the ContextMint Bridge extension and sign into creditkarma.com \u2014 the MCP reads the cookies automatically.',
-      annotations: { readOnlyHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({
         cookies: z.string().describe('Full Cookie header from a signed-in creditkarma.com request (contains CKAT, CKTRKID, etc.)'),
       }),

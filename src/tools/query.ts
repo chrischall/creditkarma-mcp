@@ -270,7 +270,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     'ck_list_transactions',
     {
       description: 'List transactions with optional filters. Paginated.',
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),
@@ -294,7 +294,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     'ck_get_recent_transactions',
     {
       description: 'Return the N most recent transactions. Convenience shortcut for ck_list_transactions.',
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({
         limit: limitArg(25).describe(`Number of transactions to return (default 25; ${LIMIT_RANGE})`),
       }),
@@ -309,7 +309,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     'ck_get_spending_by_category',
     {
       description: 'Group debit transactions by category and return totals.',
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),
@@ -326,7 +326,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     'ck_get_spending_by_merchant',
     {
       description: 'Return top merchants by total debit spend.',
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),
@@ -344,7 +344,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     'ck_get_account_summary',
     {
       description: 'Return per-account debit, credit, and net totals.',
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),

@@ -18,6 +18,7 @@
 import { randomUUID } from 'node:crypto'
 import { truncateErrorMessage, detectEdgeBlock, EdgeBlockedError } from '@chrischall/mcp-utils'
 import { obj, str, throwOnGraphqlErrors } from './json.js'
+import { REQUEST_TIMEOUT_MS } from './client.js'
 
 export const VAULT_SEARCH_URL = 'https://vault.api.intuit.com/v2/search/connections'
 
@@ -59,6 +60,7 @@ export async function searchVaultConnections(idxToken: string): Promise<unknown>
     method: 'POST',
     headers: { authorization: `Bearer ${idxToken}`, 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(SEARCH_BODY),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
   const text = await res.text()
   if (!res.ok) {

@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.3.2](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.1...v3.3.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* annotate tools truthfully and sync manifests with the served tools ([#243](https://github.com/chrischall/creditkarma-mcp/issues/243)) ([fbd8572](https://github.com/chrischall/creditkarma-mcp/commit/fbd8572d8bd777810e511a2731c2687518c679e6))
+* declare the plugin MCP config under the mcpServers key Claude Code reads ([#244](https://github.com/chrischall/creditkarma-mcp/issues/244)) ([5433248](https://github.com/chrischall/creditkarma-mcp/commit/54332483aaedee014014a2c6333ddc544297ad86))
+* **deps:** update @chrischall/mcp-utils to 3.0.0 ([#242](https://github.com/chrischall/creditkarma-mcp/issues/242)) ([aa9cfdc](https://github.com/chrischall/creditkarma-mcp/commit/aa9cfdc522a4804403c5ff9ccdc5ad7fcc29b7f4))
+* resolve low-severity audit findings ([#238](https://github.com/chrischall/creditkarma-mcp/issues/238)) ([b2d868f](https://github.com/chrischall/creditkarma-mcp/commit/b2d868f17e8b19bbffb85fc64d95964573b20de3))
+
+
+### Documentation
+
+* clarify listing-tool limit/offset ranges and splitCkatCookie callers ([#241](https://github.com/chrischall/creditkarma-mcp/issues/241)) ([081c669](https://github.com/chrischall/creditkarma-mcp/commit/081c6698bbb03a782c9c0b918c0f696e2d11f4e9))
+
 ## [3.3.1](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.0...v3.3.1) (2026-10-07)
 
 

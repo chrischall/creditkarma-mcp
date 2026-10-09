@@ -4,4 +4,4 @@
 // package.json drift. Importing these instead of package.json keeps the
 // whole manifest — npm scripts included — out of dist/bundle.js.
 export const SERVER_NAME = 'creditkarma-mcp'
-export const VERSION = '3.3.1' // x-release-please-version
+export const VERSION = '3.3.2' // x-release-please-version

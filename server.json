@@ -28,6 +28,48 @@
           "description": "Set to 1 to skip the ContextMint Bridge browser-extension fallback (missing creds become a hard error — useful in headless CI).",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "CK_DB_PATH",
+          "description": "Path to SQLite database file (default ~/.creditkarma-mcp/transactions.db).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "CK_SESSION_PATH",
+          "description": "Saved-session file that ck_set_session and token refreshes write (default ~/.creditkarma-mcp/session).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "CK_CREDIT_BUREAU",
+          "description": "Credit report used for card and loan balances: transunion or equifax (default transunion).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "CK_SYNC_MAX_PAGES",
+          "description": "Pages one ck_sync_transactions call may fetch before pausing. Unset (or unparseable) = unbounded, which is what a local stdio server wants. Set it on a hosted deployment, where the call has to answer inside the client's request timeout.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "FETCHPROXY_WS_PORT",
+          "description": "Localhost port of the fetchproxy concentrator the ContextMint Bridge extension connects to (default 37149). Every MCP on one machine shares it, so move it for all of them or not at all.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "FETCHPROXY_WS_HOST",
+          "description": "Bind interface for the fetchproxy concentrator, a literal IP only (default 127.0.0.1). Keep on loopback; it exists for hosted deployments that run each MCP in its own network namespace.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "FETCHPROXY_IDENTITY_DIR",
+          "description": "Absolute path where the fetchproxy long-term identity keypair is stored (default ~/.fetchproxy/identity/).",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

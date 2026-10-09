@@ -115,7 +115,7 @@ Version appears in SEVEN places — all must match:
 
 1. `package.json` → `"version"`
 2. `package-lock.json` → `npm install --package-lock-only` after changing package.json (or `npm version` does it automatically)
-3. `src/index.ts` → `Server` constructor `version` field
+3. `src/version.ts` → `VERSION` (the server version and fetchproxy bridge identity; `src/index.ts` and `src/auth.ts` import it rather than package.json, which would inline the whole manifest into `dist/bundle.js`)
 4. `manifest.json` → `"version"`
 5. `server.json` → `"version"` and `packages[].version` (two entries)
 6. `.claude-plugin/plugin.json` → `"version"`

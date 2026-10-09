@@ -69,7 +69,7 @@ import { bootstrap } from '@fetchproxy/bootstrap'
 import { classifyBridgeError, FetchproxyBridgeDownError } from '@chrischall/mcp-utils/fetchproxy'
 import { FetchproxyCapabilityUnavailableError, FetchproxyHelloRejectedError } from '@fetchproxy/server'
 import { readEnvVar, parseBoolEnv, parseCookieHeader, decodeJwtClaim } from '@chrischall/mcp-utils'
-import pkg from '../package.json' with { type: 'json' }
+import { SERVER_NAME, VERSION } from './version.js'
 import { CreditKarmaClient, isJwtExpired } from './client.js'
 import { CkAuthError } from './authError.js'
 import { readSavedSession, saveSession } from './session.js'
@@ -219,8 +219,8 @@ export async function resolveAuth(opts: ResolveOptions = {}): Promise<ResolvedAu
 /** Lift CKAT + CKTRKID out of the signed-in browser tab (path 3). */
 async function readFromFetchproxy(): Promise<ResolvedAuth> {
   const session = await bootstrap({
-    serverName: pkg.name,
-    version: pkg.version,
+    serverName: SERVER_NAME,
+    version: VERSION,
     // CK serves www.creditkarma.com (web) and api.creditkarma.com
     // (GraphQL). Both share the apex domain; the extension matches on
     // suffix so listing the apex covers any subdomain.

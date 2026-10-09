@@ -34,7 +34,14 @@
       ],
       "env": {
         "CK_COOKIES": "${user_config.ck_cookies}",
-        "CK_DB_PATH": "${user_config.ck_db_path}"
+        "CK_DB_PATH": "${user_config.ck_db_path}",
+        "CK_DISABLE_FETCHPROXY": "${user_config.ck_disable_fetchproxy}",
+        "CK_SESSION_PATH": "${user_config.ck_session_path}",
+        "CK_CREDIT_BUREAU": "${user_config.ck_credit_bureau}",
+        "CK_SYNC_MAX_PAGES": "${user_config.ck_sync_max_pages}",
+        "FETCHPROXY_WS_PORT": "${user_config.fetchproxy_ws_port}",
+        "FETCHPROXY_WS_HOST": "${user_config.fetchproxy_ws_host}",
+        "FETCHPROXY_IDENTITY_DIR": "${user_config.fetchproxy_identity_dir}"
       }
     }
   },
@@ -51,9 +58,55 @@
       "title": "Database File Path",
       "description": "Optional override for the SQLite database file. Defaults to ~/.creditkarma-mcp/transactions.db. Set to a custom absolute path if you want the data stored elsewhere.",
       "required": false
+    },
+    "ck_disable_fetchproxy": {
+      "type": "string",
+      "title": "Disable Browser Fallback (advanced)",
+      "description": "Set to 1 to skip the fetchproxy fallback (headless / CI). Missing credentials then become a hard error.",
+      "required": false
+    },
+    "ck_session_path": {
+      "type": "string",
+      "title": "Saved Session File Path",
+      "description": "Optional override for the saved-session file that ck_set_session and token refreshes write. Defaults to ~/.creditkarma-mcp/session.",
+      "required": false
+    },
+    "ck_credit_bureau": {
+      "type": "string",
+      "title": "Credit Bureau",
+      "description": "Credit report used for card and loan balances: transunion or equifax. Defaults to transunion.",
+      "required": false
+    },
+    "ck_sync_max_pages": {
+      "type": "string",
+      "title": "Sync Page Budget (advanced)",
+      "description": "Pages one ck_sync_transactions call may fetch before pausing. Unset (or unparseable) = unbounded, which is what a local stdio server wants. Set it on a hosted deployment, where the call has to answer inside the client's request timeout.",
+      "required": false
+    },
+    "fetchproxy_ws_port": {
+      "type": "string",
+      "title": "fetchproxy port (advanced)",
+      "description": "Localhost port of the fetchproxy concentrator the ContextMint Bridge extension connects to (default 37149). Every MCP on one machine shares it, so move it for all of them or not at all.",
+      "required": false
+    },
+    "fetchproxy_ws_host": {
+      "type": "string",
+      "title": "fetchproxy bind address (advanced)",
+      "description": "Bind interface for the fetchproxy concentrator, a literal IP only (default 127.0.0.1). Keep on loopback; it exists for hosted deployments that run each MCP in its own network namespace.",
+      "required": false
+    },
+    "fetchproxy_identity_dir": {
+      "type": "string",
+      "title": "fetchproxy identity directory (advanced)",
+      "description": "Absolute path where the fetchproxy long-term identity keypair is stored (default ~/.fetchproxy/identity/).",
+      "required": false
     }
   },
   "tools": [
+    {
+      "name": "ck_healthcheck",
+      "description": "Resolve the credential the way real tools do, then make one authenticated request to creditkarma.com; reports the credential source, whether it was accepted, and which hop broke. Read-only; never returns the credential"
+    },
     {
       "name": "ck_set_session",
       "description": "Store a Credit Karma session cookie to enable automatic token refresh"

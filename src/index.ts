@@ -7,6 +7,8 @@ import type { Database } from './db.js'
 import { resolveLocalAuth, splitCkatCookie, persistRotatedSessions } from './auth.js'
 import { dbPath as defaultDbPath } from './session.js'
 
+import { SERVER_NAME, VERSION } from './version.js'
+
 import { registerAuthTools } from './tools/auth.js'
 import { registerHealthcheckTools } from './tools/healthcheck.js'
 import { registerSyncTools } from './tools/sync.js'
@@ -55,8 +57,8 @@ async function main() {
   persistRotatedSessions(ctx.client)
 
   await runMcp({
-    name: 'creditkarma-mcp',
-    version: '3.3.1', // x-release-please-version
+    name: SERVER_NAME,
+    version: VERSION,
     deps: ctx,
     tools: [
       registerHealthcheckTools,

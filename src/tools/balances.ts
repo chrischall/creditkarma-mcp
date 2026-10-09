@@ -210,7 +210,7 @@ export function registerBalanceTools(server: McpServer, ctx: AppContext): void {
         'last 4); one that duplicates a linked account is hidden unless include_matched:true. ' +
         'Liabilities are negative, matching transactions; available credit is limit minus balance. ' +
         '`stale` is true past 7 days (linked) or 35 days (credit report).',
-      annotations: { readOnlyHint: false, idempotentHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: z.object({
         refresh: z.boolean().optional().describe(
           'Fetch balances live before reading. Default false (local data only).',

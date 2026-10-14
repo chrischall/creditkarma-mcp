@@ -18,7 +18,7 @@ export type CkAuthReason =
   /** Credentials were readable, but the refresh JWT's own `exp` is in the past.
    *  Detected locally, before any network call. */
   | 'session_stale'
-  /** Credentials looked usable and CK rejected them at `/member/oauth2/refresh`. */
+  /** Credentials looked usable and CK rejected them at the token refresh (`CK_REFRESH_ENDPOINT`). */
   | 'session_rejected'
 
 export class CkAuthError extends Error {

@@ -270,11 +270,12 @@ describe('client — cookie and refresh token storage', () => {
     expect(c.getRefreshToken()).toBe('new-refresh')
 
     const [url, opts] = spy.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('https://www.creditkarma.com/member/oauth2/refresh')
+    expect(url).toBe('https://api.creditkarma.com/mobile/4.5/oauth2/token')
     expect(JSON.parse(opts.body as string)).toEqual({ refreshToken: 'my-refresh' })
     const headers = opts.headers as Record<string, string>
     expect(headers['ck-cookie-id']).toBe('abc123')
-    expect(headers['Cookie']).toBe('CKTRKID=abc123')
+    // The browser's cross-origin refresh carries no cookies; neither do we.
+    expect(headers['Cookie']).toBeUndefined()
   })
 
   it('refreshAccessToken throws on HTTP error', async () => {

@@ -353,6 +353,10 @@ describe('resolveAuth', () => {
       expect(opts.serverName).toBe('creditkarma-mcp')
       expect(typeof opts.version).toBe('string')
       expect(opts.domains).toEqual(['creditkarma.com'])
+      // Read as www.creditkarma.com would see them: that URL matches both the
+      // `.creditkarma.com` cookies the web app writes AND any host-only `www`
+      // copy, which a lookup on the bare apex cannot see.
+      expect((opts as { storageSubdomain?: string }).storageSubdomain).toBe('www')
       expect(opts.declare.cookies).toEqual(['CKAT', 'CKTRKID'])
       expect(opts.declare.localStorage).toEqual([])
       expect(opts.declare.sessionStorage).toEqual([])
@@ -387,6 +391,34 @@ describe('resolveAuth', () => {
 
       await expect(resolveAuth()).rejects.toThrow(/fetchproxy fallback failed/)
       await expect(resolveAuth()).rejects.toThrow(/CKTRKID/)
+    })
+
+    it('traces the source, cookie NAMES and JWT timings under CK_DEBUG — never values', async () => {
+      const nowS = Math.floor(Date.now() / 1000)
+      const acc = makeJwt({ iat: nowS - 30, exp: nowS + 870 })
+      const ref = makeJwt({ iat: nowS - 30, exp: nowS + 28800 })
+      bootstrapMock.mockResolvedValue({
+        cookies: { CKAT: `${acc}%3B${ref}`, CKTRKID: 'trk-secret' },
+        localStorage: {},
+        sessionStorage: {},
+        capturedHeaders: {},
+      })
+      process.env.CK_DEBUG = '1'
+      const stderr = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        await resolveAuth()
+      } finally {
+        delete process.env.CK_DEBUG
+      }
+      const out = stderr.mock.calls.map((c) => c.join(' ')).join('\n')
+      stderr.mockRestore()
+      expect(out).toContain('auth.fetchproxy {"url":"https://www.creditkarma.com","cookie_names":["CKAT","CKTRKID"]}')
+      expect(out).toContain('auth.resolved {"source":"fetchproxy","cookie_names":["CKTRKID","CKAT"]')
+      expect(out).toContain('"access_token":{"present":true')
+      expect(out).toContain('"expires_in_s":')
+      expect(out).not.toContain(acc)
+      expect(out).not.toContain(ref)
+      expect(out).not.toContain('trk-secret')
     })
 
     it('wraps bootstrap() errors with actionable context', async () => {

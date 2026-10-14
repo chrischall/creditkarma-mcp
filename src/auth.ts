@@ -38,7 +38,7 @@
 //
 //      All subsequent API calls go out via plain Node `fetch()` —
 //      fetchproxy is NOT in the request hot path. Token refresh
-//      (`POST /member/oauth2/refresh`) is also a plain Node fetch.
+//      (`POST api.creditkarma.com/mobile/4.5/oauth2/token`) is also a plain Node fetch.
 //
 //      Users opt out with CK_DISABLE_FETCHPROXY=1 (anyone who wants the
 //      old behavior of "fail loudly when creds are missing").
@@ -52,7 +52,7 @@
 //   The MCP then operates from Node with direct fetch — latency and
 //   reliability are not coupled to the browser bridge for normal tool
 //   calls. If the access JWT inside CKAT expires, the refresh flow runs
-//   in pure Node against `creditkarma.com/member/oauth2/refresh`. If
+//   in pure Node against `api.creditkarma.com/mobile/4.5/oauth2/token`. If
 //   that 403s (Akamai gate / expired refresh JWT), the user re-signs into
 //   creditkarma.com in the browser and the next MCP run re-reads the
 //   fresh cookies.
@@ -73,6 +73,7 @@ import { SERVER_NAME, VERSION } from './version.js'
 import { CreditKarmaClient, isJwtExpired } from './client.js'
 import { CkAuthError } from './authError.js'
 import { readSavedSession, saveSession } from './session.js'
+import { debugLog, jwtTimes } from './debug.js'
 
 /** Result of resolving CK auth, regardless of which path was taken. */
 export interface ResolvedAuth {
@@ -112,6 +113,18 @@ export interface ResolveOptions {
 }
 
 export async function resolveAuth(opts: ResolveOptions = {}): Promise<ResolvedAuth> {
+  const auth = await resolveAuthUntraced(opts)
+  const { accessToken, refreshToken } = splitCkatCookie(auth.cookies)
+  debugLog('auth.resolved', {
+    source: auth.source,
+    cookie_names: Object.keys(parseCookieHeader(auth.cookies)),
+    access_token: jwtTimes(accessToken),
+    refresh_token: jwtTimes(refreshToken),
+  })
+  return auth
+}
+
+async function resolveAuthUntraced(opts: ResolveOptions): Promise<ResolvedAuth> {
   // ── Paths 1 + 2: CK_COOKIES env var / saved session file — but only a LIVE
   //    one short-circuits the browser. Every refresh rotation is saved to the
   //    session file, fetchproxy-only users included, so an expired local
@@ -216,6 +229,9 @@ export async function resolveAuth(opts: ResolveOptions = {}): Promise<ResolvedAu
   )
 }
 
+/** Host label the fetchproxy cookie read targets — see {@link readFromFetchproxy}. */
+const FETCHPROXY_COOKIE_SUBDOMAIN = 'www'
+
 /** Lift CKAT + CKTRKID out of the signed-in browser tab (path 3). */
 async function readFromFetchproxy(): Promise<ResolvedAuth> {
   const session = await bootstrap({
@@ -225,6 +241,11 @@ async function readFromFetchproxy(): Promise<ResolvedAuth> {
     // (GraphQL). Both share the apex domain; the extension matches on
     // suffix so listing the apex covers any subdomain.
     domains: ['creditkarma.com'],
+    // The extension reads with `chrome.cookies.get({url})`, which only sees
+    // cookies that URL would be SENT. The bare apex misses a host-only cookie
+    // on www; www sees those AND the `.creditkarma.com` ones CK's web app
+    // writes (`writeWebAccessTokenCookie`) — exactly what the signed-in tab uses.
+    storageSubdomain: FETCHPROXY_COOKIE_SUBDOMAIN,
     declare: {
       // CKAT contains the access + refresh JWTs joined by `%3B`. CKTRKID
       // is sent as the `ck-cookie-id` header on refresh requests; without
@@ -240,6 +261,14 @@ async function readFromFetchproxy(): Promise<ResolvedAuth> {
 
   const ckat = session.cookies['CKAT']
   const cktrkid = session.cookies['CKTRKID']
+  // No tab is involved: the extension reads the cookie store of the Chrome
+  // profile it is installed (and paired) in. A sign-in in another profile or
+  // browser is invisible to it — the usual cause of "CKAT missing" beside a
+  // tab that is plainly signed in.
+  debugLog('auth.fetchproxy', {
+    url: `https://${FETCHPROXY_COOKIE_SUBDOMAIN}.creditkarma.com`,
+    cookie_names: Object.keys(session.cookies),
+  })
   if (!ckat) {
     throw new CkAuthError(
       'no_credentials',

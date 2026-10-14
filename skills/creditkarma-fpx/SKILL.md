@@ -117,29 +117,36 @@ For the next page, re-run the same body with
 
 ## Refreshing the access token (no need to re-run `fpx` for this)
 
-The access token is short-lived (~10 min). Refresh with the `refreshToken`
+The access token is short-lived (~15 min). Refresh with the `refreshToken`
 you already extracted — this is a plain `curl`, not another `fpx` capture:
 
 ```sh
 GLID=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1].split('.')[1],'base64url').toString()).glid||'')" "$ACCESS")
 
-curl -s https://www.creditkarma.com/member/oauth2/refresh -X POST \
-  -H 'Content-Type: application/json' \
+curl -s https://api.creditkarma.com/mobile/4.5/oauth2/token -X POST \
+  -H 'content-type: application/json' \
+  -H 'accept: multipart/mixed; deferSpec=20220824, application/json' \
   -H 'Origin: https://www.creditkarma.com' \
   -H 'Referer: https://www.creditkarma.com/' \
   -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-  -H 'ck-client-name: web' -H 'ck-client-version: 1.0.0' -H 'ck-device-type: Desktop' \
+  -H 'ck-client-name: prime_web' \
+  -H 'ck-client-version: 2.0.35' \
+  -H 'ck-device-type: Desktop' \
   -H "Authorization: Bearer $ACCESS" \
   -H "ck-trace-id: $GLID" \
   -H "ck-cookie-id: $CKTRKID" \
-  -H "Cookie: CKTRKID=$CKTRKID; CKAT=$ACCESS%3B$REFRESH" \
   --data "$(jq -n --arg rt "$REFRESH" '{refreshToken:$rt}')" \
   | jq '{accessToken, refreshToken}'
 ```
 
-A non-JSON (HTML) error body from this endpoint means the refresh token
-itself is dead — re-sign into `creditkarma.com` in the browser and re-run
-`fpx cookies -p creditkarma` to capture a fresh `CKAT`/`CKTRKID` pair.
+A `200` carrying `{"errorCode":"SecErr"}` with `server: AkamaiNetStorage` is
+Akamai's canned block. The request never reached CK, usually because the
+`Origin` or browser `User-Agent` header was missing, so fix the request, not
+the session. An **empty 400** from `CK-FG-server` means CK has ended the
+session: re-sign into `creditkarma.com` in the browser and re-run
+`fpx cookies -p creditkarma` to capture a fresh `CKAT`/`CKTRKID` pair. Note every successful refresh
+ROTATES the refresh token and signs the browser tab out, so refresh only when
+the access token has actually expired.
 
 ## Output / exit-code contract
 

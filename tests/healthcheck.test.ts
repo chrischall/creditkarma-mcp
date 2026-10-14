@@ -2,11 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test'
 import { registerHealthcheckTools } from '../src/tools/healthcheck.js'
 import type { AppContext } from '../src/index.js'
-import type { CreditKarmaClient } from '../src/client.js'
+import type { CreditKarmaClient, RefreshOutcome } from '../src/client.js'
 import { CkAuthError } from '../src/authError.js'
+import { EdgeBlockedError } from '@chrischall/mcp-utils'
 
+interface Step { status: string; [k: string]: unknown }
 interface Result {
   ok: boolean
+  steps: { credential_lookup: Step; token_validity: Step; refresh: Step; probe: Step }
+  failed_step?: string
   credential: { source: string | null; resolved: boolean; detail?: Record<string, unknown> }
   error?: { kind: string; message: string; detail?: Record<string, unknown> }
   hint: string
@@ -26,10 +30,18 @@ async function call(opts: {
   applyCookies?: () => void
   probe?: () => Promise<unknown>
   held?: Held
+  /** What the client's refresh did while the probe ran, if it ran one. */
+  refreshDuringProbe?: RefreshOutcome
 }): Promise<Result> {
   const held = opts.held ?? {}
+  let lastRefresh: RefreshOutcome | null = null
+  const probe = opts.probe ?? (async () => ({ transactions: [] }))
   const client = {
-    fetchPage: opts.probe ?? (async () => ({ transactions: [] })),
+    fetchPage: async () => {
+      if (opts.refreshDuringProbe) lastRefresh = opts.refreshDuringProbe
+      return probe()
+    },
+    getLastRefresh: () => lastRefresh,
     getToken: () => held.token ?? null,
     getRefreshToken: () => held.refreshToken ?? null,
     isTokenExpired: () => held.accessExpired ?? !held.token,
@@ -242,7 +254,7 @@ describe('ck_healthcheck: default wiring', () => {
   })
 
   it('uses the real resolver and reports no_credential', async () => {
-    const client = { fetchPage: async () => ({}) } as unknown as CreditKarmaClient
+    const client = { fetchPage: async () => ({}), getLastRefresh: () => null } as unknown as CreditKarmaClient
     const h = await createTestHarness((server) =>
       registerHealthcheckTools(server, { client } as AppContext),
     )
@@ -251,5 +263,180 @@ describe('ck_healthcheck: default wiring', () => {
     const r = parseToolResult<Result>(res as never)
     expect(r.ok).toBe(false)
     expect(r.credential.source).toBeNull()
+  })
+})
+
+// 2026-10-13: the healthcheck said only "credential_rejected … sign in again",
+// four times in a row, for a session signed in minutes earlier. Each hop is now
+// reported on its own so the failing one is named, and an edge block is not
+// sent back to the sign-in page.
+describe('ck_healthcheck: hop-by-hop report', () => {
+  const nowS = () => Math.floor(Date.now() / 1000)
+  const tok = (claims: Record<string, number>) =>
+    `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`
+
+  it('reports every hop on success, with the refresh skipped', async () => {
+    const r = await call({
+      resolve: async () => ({ cookies: `CKAT=${LIVE}%3B${LIVE}`, source: 'fetchproxy' }),
+    })
+    expect(r.ok).toBe(true)
+    expect(r.steps.credential_lookup).toEqual({ status: 'ok', source: 'fetchproxy' })
+    expect(r.steps.token_validity).toMatchObject({ status: 'ok', access_token: 'live', refresh_token: 'live' })
+    expect(r.steps.token_validity.access_expires_in_s).toBeGreaterThan(3500)
+    expect(r.steps.refresh).toEqual({ status: 'skipped' })
+    expect(r.steps.probe).toEqual({ status: 'ok' })
+    expect(r.failed_step).toBeUndefined()
+  })
+
+  it('reports a refresh that ran and worked', async () => {
+    const r = await call({ refreshDuringProbe: { outcome: 'ok', status: 200, at: Date.now() } })
+    expect(r.ok).toBe(true)
+    expect(r.steps.refresh).toEqual({ status: 'ok', http_status: 200 })
+  })
+
+  it('names the refresh as the failing hop when it is', async () => {
+    const msg = 'CK auth: session rejected — Token refresh failed: HTTP 400 — (non-JSON error page)'
+    const r = await call({
+      refreshDuringProbe: { outcome: 'failed', status: 400, message: msg, at: Date.now() },
+      probe: async () => {
+        throw new CkAuthError('session_rejected', msg, 400)
+      },
+    })
+    expect(r.ok).toBe(false)
+    expect(r.steps.refresh).toEqual({ status: 'failed', http_status: 400, message: msg })
+    expect(r.steps.probe).toEqual({ status: 'not_reached' })
+    expect(r.failed_step).toBe('refresh')
+  })
+
+  // Measured 2026-10-13: a refresh token issued 23 min earlier, not expired,
+  // was refused because CK had already ended the session (an idle tab was
+  // signed out). A recent `iat` does NOT prove the session alive, so a
+  // rejection always advises signing in again — and says why that is the
+  // usual cause even for a token that looks new.
+  it('advises signing in again even when the rejected token looks new, and says why', async () => {
+    const recent = tok({ iat: nowS() - 23 * 60, exp: nowS() + 8 * 3600 })
+    const r = await call({
+      resolve: async () => ({ cookies: `CKAT=${LIVE}%3B${recent}`, source: 'fetchproxy' }),
+      refreshDuringProbe: { outcome: 'failed', status: 400, at: Date.now() },
+      probe: async () => {
+        throw new CkAuthError('session_rejected', 'refresh 400', 400)
+      },
+    })
+    expect(r.hint).toMatch(/Sign in again/)
+    expect(r.hint).toMatch(/issued 23 min ago/)
+    expect(r.hint).toMatch(/ends sessions/)
+    expect(r.hint).toMatch(/CK_DEBUG=1/)
+  })
+
+  it('advises signing in without the "looks new" note for an old token', async () => {
+    const old = tok({ iat: nowS() - 6 * 3600, exp: nowS() + 2 * 3600 })
+    const r = await call({
+      resolve: async () => ({ cookies: `CKAT=${LIVE}%3B${old}`, source: 'fetchproxy' }),
+      probe: async () => {
+        throw new CkAuthError('session_rejected', 'refresh 400', 400)
+      },
+    })
+    expect(r.hint).toMatch(/Sign in again/)
+    expect(r.hint).not.toMatch(/min ago/)
+  })
+
+  // The case that genuinely must NOT send anyone to the sign-in page: the edge
+  // refused the refresh before CK saw the token.
+  it('does not advise signing in when the refresh was blocked at the edge', async () => {
+    const r = await call({
+      refreshDuringProbe: { outcome: 'failed', status: 200, message: 'blocked', at: Date.now() },
+      probe: async () => {
+        throw new EdgeBlockedError(200, 'Akamai', { service: 'creditkarma.com', method: 'POST', path: '/mobile/4.5/oauth2/token' })
+      },
+    })
+    expect(r.ok).toBe(false)
+    expect(r.failed_step).toBe('refresh')
+    expect(r.hint).not.toMatch(/sign in again/i)
+  })
+
+  it('reports a refresh that failed before any HTTP status (transport error)', async () => {
+    const r = await call({
+      refreshDuringProbe: { outcome: 'failed', message: 'fetch failed', at: Date.now() },
+      probe: async () => {
+        throw new Error('fetch failed')
+      },
+    })
+    expect(r.steps.refresh).toEqual({ status: 'failed', message: 'fetch failed' })
+    expect(r.failed_step).toBe('refresh')
+  })
+
+  it('names the probe when the request itself failed', async () => {
+    const r = await call({
+      probe: async () => {
+        throw new Error('Credit Karma 503')
+      },
+    })
+    expect(r.steps.refresh).toEqual({ status: 'skipped' })
+    expect(r.steps.probe).toMatchObject({ status: 'failed', message: 'Credit Karma 503' })
+    expect(r.failed_step).toBe('probe')
+  })
+
+  it('names the token check when the session is stale before any request', async () => {
+    const r = await call({
+      applyCookies: () => {
+        throw new CkAuthError('session_stale', 'refresh JWT expired')
+      },
+    })
+    expect(r.steps.token_validity.status).toBe('failed')
+    expect(r.steps.refresh).toEqual({ status: 'not_reached' })
+    expect(r.failed_step).toBe('token_validity')
+  })
+
+  it('names the credential lookup when nothing resolved', async () => {
+    const r = await call({
+      resolve: async () => {
+        throw new CkAuthError('no_credentials', 'CK auth: no credentials readable')
+      },
+    })
+    expect(r.steps.credential_lookup).toMatchObject({ status: 'failed' })
+    expect(r.steps.token_validity).toEqual({ status: 'not_reached' })
+    expect(r.steps.probe).toEqual({ status: 'not_reached' })
+    expect(r.failed_step).toBe('credential_lookup')
+  })
+
+  it('names the credential lookup when the resolver throws something else', async () => {
+    const r = await call({
+      resolve: async () => {
+        throw new Error('ContextMint Bridge is down')
+      },
+    })
+    expect(r.steps.credential_lookup).toEqual({ status: 'failed', message: 'ContextMint Bridge is down' })
+    expect(r.failed_step).toBe('credential_lookup')
+  })
+
+  it('reports an expired access token as fine when the refresh token is live', async () => {
+    const r = await call({
+      resolve: async () => ({ cookies: `CKAT=${DEAD}%3B${LIVE}`, source: 'session' }),
+    })
+    expect(r.steps.token_validity).toMatchObject({ status: 'ok', access_token: 'expired', refresh_token: 'live' })
+  })
+
+  it('reports the token check as failed when neither token can be used', async () => {
+    const r = await call({
+      resolve: async () => ({ cookies: `CKAT=${DEAD}%3B${DEAD}`, source: 'session' }),
+      applyCookies: () => {
+        throw new CkAuthError('session_stale', 'refresh JWT expired')
+      },
+    })
+    expect(r.steps.token_validity).toMatchObject({ status: 'failed', access_token: 'expired', refresh_token: 'expired' })
+  })
+
+  it('reports a non-Error throw as text', async () => {
+    const r = await call({
+      resolve: async () => {
+        throw 'bridge exploded'
+      },
+    })
+    expect(r.steps.credential_lookup).toEqual({ status: 'failed', message: 'bridge exploded' })
+  })
+
+  it('never echoes a token in the hop report', async () => {
+    const r = await call({ resolve: async () => ({ cookies: `CKAT=${LIVE}%3B${LIVE}`, source: 'env' }) })
+    expect(JSON.stringify(r.steps)).not.toContain(LIVE.split('.')[1])
   })
 })

@@ -376,7 +376,7 @@ async function refreshOrThrow(ctx: AppContext, tokenKnownDead = false): Promise<
   // This used to refresh unconditionally, "to be sure", on the reasoning that a
   // token just read from CKAT might already be stale. It might — but checking
   // is free, and refreshing when we didn't need to is not: every
-  // /member/oauth2/refresh ROTATES CK's refresh token, which invalidates the
+  // token refresh ROTATES CK's refresh token, which invalidates the
   // copy still sitting in the browser's CKAT cookie. The user then gets signed
   // out of creditkarma.com and told it was "inactivity" (#119). A server that
   // syncs on a schedule did that on every process start.

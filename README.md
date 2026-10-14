@@ -200,12 +200,15 @@ sync_state   (key, value)
 | `CK_DISABLE_FETCHPROXY` | Set to `1` to skip the fetchproxy fallback (headless / CI) | *(unset)* |
 | `CK_DB_PATH` | Path to SQLite database file | `~/.creditkarma-mcp/transactions.db` |
 | `CK_CREDIT_BUREAU` | Credit report used for card and loan balances: `transunion` or `equifax` | `transunion` |
+| `CK_DEBUG` | Set to `1` to trace auth to stderr — credential source, cookie names, JWT timings, and the token-refresh request/response. Never logs token or cookie values | *(unset)* |
 
 ## Troubleshooting
 
 **"CK auth: set CK_COOKIES, or call the ck_set_session MCP tool, or install the ContextMint Bridge extension…"** — neither auth path is configured. Either fill in `CK_COOKIES` in your Claude config, or install [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases) and sign into `creditkarma.com` in your browser.
 
 **"TOKEN_EXPIRED"** — your refresh token has expired. Sign back into creditkarma.com (ContextMint Bridge path) or grab a fresh Cookie header from DevTools and update `CK_COOKIES` / call `ck_set_session`.
+
+**`ck_healthcheck` fails with a fresh sign-in** — read its `steps` / `failed_step`: they report credential lookup, token validity, refresh and probe separately. A `refresh` failure reported as **blocked at its CDN/WAF (Akamai)** means the request never reached Credit Karma, and signing in won't help. A `session rejected` refresh means Credit Karma ended the session, even when the token looks new: an idle tab gets signed out. Sign in again. If a sign-in made moments ago fails the same way, restart with `CK_DEBUG=1` and compare against [docs/refresh-ground-truth.md](docs/refresh-ground-truth.md).
 
 **"fetchproxy fallback failed"** — the env-var path wasn't configured and the extension couldn't be reached. Confirm ContextMint Bridge is installed, you're signed into Credit Karma, and that it's running (open the extension popup). To disable the fallback, set `CK_DISABLE_FETCHPROXY=1`.
 
@@ -221,7 +224,7 @@ sync_state   (key, value)
 - The saved-session file is written at mode 0600 (owner read/write only), in a 0700 directory, by `ck_set_session` and by every token-refresh rotation
 - `ck_set_session` refuses to save a refresh token whose JWT `exp` is already in the past — prevents stale credentials from polluting the saved session
 - The fetchproxy path reads cookies directly from the user's browser via `chrome.cookies.get`, but it is **not** memory-only: every token refresh rotates the session, and the rotated `CKAT`/`CKTRKID` Cookie header is saved to the saved-session file (`~/.creditkarma-mcp/session`, or `CK_SESSION_PATH`) at mode 0600 in a 0700 directory — fetchproxy-only users included — so a restart can recover without re-reading the browser. Call `ck_forget_session` (or delete that file) to remove it
-- The server never logs credentials; warnings go to stderr only (stdout is reserved for the MCP JSON-RPC stream)
+- The server never logs credentials (including under `CK_DEBUG=1`, which logs names, timings and redacted bodies only); warnings go to stderr only (stdout is reserved for the MCP JSON-RPC stream)
 - Only `SELECT` queries are permitted via `ck_query_sql` — no writes to Credit Karma; the underlying `node:sqlite` `prepare()` also rejects multi-statement input
 
 ## Uninstall / Reset

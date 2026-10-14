@@ -7,7 +7,7 @@ import { persistRotatedSessions, resolveAuth } from '../src/auth.js'
 import { readSavedSession } from '../src/session.js'
 import { makeJwt } from './helpers.js'
 
-// fleet-audit#69: every /member/oauth2/refresh ROTATES CK's refresh token. The
+// fleet-audit#69: every token refresh ROTATES CK's refresh token. The
 // client used to keep the rotated pair only in memory, so (a) the Cookie header
 // it kept sending still carried the rotated-out CKAT, and (b) a restart loaded
 // the dead token from CK_COOKIES and failed with session_rejected.

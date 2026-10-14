@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.3.3](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.2...v3.3.3) (2026-10-14)
+
+
+### Bug Fixes
+
+* **auth:** refresh at CK's current token endpoint ([#248](https://github.com/chrischall/creditkarma-mcp/issues/248)) ([f91de09](https://github.com/chrischall/creditkarma-mcp/commit/f91de09a4b84a854db1d5d4421860edb45a297fa))
+* **deps:** bump the production-dependencies group with 2 updates ([#246](https://github.com/chrischall/creditkarma-mcp/issues/246)) ([3211f3b](https://github.com/chrischall/creditkarma-mcp/commit/3211f3bdcb113a69037babf7eb56854709f49d1d))
+
 ## [3.3.2](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.1...v3.3.2) (2026-10-09)
 
 

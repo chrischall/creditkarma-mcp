@@ -36,6 +36,7 @@
         "CK_COOKIES": "${user_config.ck_cookies}",
         "CK_DB_PATH": "${user_config.ck_db_path}",
         "CK_DISABLE_FETCHPROXY": "${user_config.ck_disable_fetchproxy}",
+        "CK_DEBUG": "${user_config.ck_debug}",
         "CK_SESSION_PATH": "${user_config.ck_session_path}",
         "CK_CREDIT_BUREAU": "${user_config.ck_credit_bureau}",
         "CK_SYNC_MAX_PAGES": "${user_config.ck_sync_max_pages}",
@@ -63,6 +64,12 @@
       "type": "string",
       "title": "Disable Browser Fallback (advanced)",
       "description": "Set to 1 to skip the fetchproxy fallback (headless / CI). Missing credentials then become a hard error.",
+      "required": false
+    },
+    "ck_debug": {
+      "type": "string",
+      "title": "Debug Trace (advanced)",
+      "description": "Set to 1 to trace auth to stderr: credential source, cookie names, token issue/expiry times, and the token-refresh exchange. Never logs token or cookie values.",
       "required": false
     },
     "ck_session_path": {

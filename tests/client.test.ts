@@ -351,7 +351,7 @@ describe('CreditKarmaClient — refresh token', () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
       new Response('', { status: 400, headers: { 'content-type': 'application/json' } })
     )
-    await expect(c.refreshAccessToken()).rejects.toThrow('(empty body)')
+    await expect(c.refreshAccessToken()).rejects.toThrow('(empty body — CK has most likely ended the session')
   })
 
   // Audit 2026-06-09: refresh-failure bodies must be redacted (not just sliced)

@@ -8,6 +8,7 @@ import {
 import { TokenManager } from '@chrischall/mcp-utils/session'
 import { CkAuthError } from './authError.js'
 import * as queryHash from './queryHash.js'
+import { debugLog, jwtTimes, debugBody, headerNames, responseHeaders } from './debug.js'
 
 /**
  * Fallback lifetime assumed for an access token whose real expiry can't be
@@ -20,7 +21,7 @@ const TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
  * When the access token actually expires.
  *
  * Prefers the JWT's own `exp` over a synthetic window, because the difference
- * decides whether we POST `/member/oauth2/refresh` — and every one of those
+ * decides whether we POST a token refresh — and every one of those
  * ROTATES CK's refresh token, invalidating the copy in the browser's `CKAT`
  * cookie and eventually signing the user out of creditkarma.com (#119).
  * Assuming a 10-minute life for a token CK actually gave 15 minutes
@@ -34,6 +35,16 @@ function accessTokenExpiry(token: string | null | undefined): number {
   return typeof exp === 'number' ? exp * 1000 : Date.now() + TOKEN_TTL_MS
 }
 
+/**
+ * How close to its real `exp` an access token may get before it is refreshed
+ * ahead of use. The shared TokenManager defaults to FIVE minutes, which on
+ * CK's ~15-minute tokens meant a token the healthcheck called "live" was
+ * refreshed first a third of the time — and every refresh ROTATES the shared
+ * CKAT (#119), while a failed one failed a request the token could still have
+ * served. A minute covers clock skew and a request in flight.
+ */
+const REFRESH_SKEW_MS = 60 * 1000
+
 /** Pause before the single post-429 replay. */
 const RATE_LIMIT_BACKOFF_MS = 2000
 
@@ -41,7 +52,7 @@ const RATE_LIMIT_BACKOFF_MS = 2000
  * Client identity the GraphQL gateway keys its persisted-operation registry on.
  *
  * `prime_web` is the CK web app's own value and the ONLY one that resolves —
- * `web` (what `/member/oauth2/refresh` accepts) is rejected. Without this
+ * `web` (what the retired `/member/oauth2/refresh` took) is rejected. Without this
  * header pair the gateway has no registry to look the operation up in and
  * answers `No query found`, which is why that error was long mistaken for a
  * ~44% upstream flake.
@@ -74,6 +85,9 @@ export const TRANSACTION_QUERY_HASH =
   'e84296c61147719ced605fbba7bb30ef847903dd07f3a4f7c2ea8d0db107338e'
 
 export const GRAPHQL_ENDPOINT = 'https://api.creditkarma.com/graphql'
+
+const USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
 
 /**
  * A safelisted CK operation and the web app it belongs to.
@@ -137,7 +151,33 @@ export const OPERATIONS = {
 /** Sentinel for "the gateway could not resolve our persisted hash" — distinct
  *  from a page, and not an error, because it has a recovery path. */
 const NO_QUERY_FOUND = Symbol('NO_QUERY_FOUND')
-export const CK_REFRESH_ENDPOINT = 'https://www.creditkarma.com/member/oauth2/refresh'
+/**
+ * Where CK's own web app refreshes its tokens: `refreshViaMobileApi` /
+ * `webAuthRefreshCkatCookie` in the prime_web 2.0.35 bundle POST
+ * `${API_URL}/oauth2/token` with `API_URL = https://api.creditkarma.com/mobile/4.5`.
+ *
+ * It replaced `https://www.creditkarma.com/member/oauth2/refresh`, which now
+ * answers EVERY request — a dummy token included — with the same
+ * `400 text/html` error page from `CK-FG-server`. That page is what the
+ * 2026-10-13 outage relayed as "session rejected" minutes after a fresh
+ * sign-in: a dead route read as a dead session. A 200 is not trusted until it
+ * carries an `accessToken`: Akamai answers a request it will not forward with
+ * a canned `200 {"errorCode":"SecErr"}` (see `postRefresh`).
+ */
+export const CK_REFRESH_ENDPOINT = 'https://api.creditkarma.com/mobile/4.5/oauth2/token'
+
+/** Path of {@link CK_REFRESH_ENDPOINT}, for error messages. */
+const CK_REFRESH_PATH = new URL(CK_REFRESH_ENDPOINT).pathname
+
+/** What the most recent refresh POST did — for `ck_healthcheck`'s hop report. */
+export interface RefreshOutcome {
+  outcome: 'ok' | 'failed'
+  /** HTTP status, when the request got one. */
+  status?: number
+  /** The failure's message (already redacted). */
+  message?: string
+  at: number
+}
 
 /**
  * Abort deadline for every Credit Karma / Intuit request (GraphQL, token
@@ -185,7 +225,7 @@ export class CreditKarmaClient {
    * Owns the bearer-token lifecycle: TTL/expiry tracking, proactive refresh
    * inside a skew window, the single 401-replay on the authed GraphQL POST, and
    * the single-flight semaphore that coalesces concurrent refreshes into ONE
-   * `/member/oauth2/refresh` POST. Replaces the hand-rolled `tokenSetAt` TTL
+   * {@link CK_REFRESH_ENDPOINT} POST. Replaces the hand-rolled `tokenSetAt` TTL
    * tracking + `refreshInFlight` single-flight this class used to carry.
    *
    * CK's access/refresh tokens + cookies remain this class's own mutable state
@@ -216,6 +256,9 @@ export class CreditKarmaClient {
   /** Told the rebuilt Cookie header after every successful refresh. */
   private sessionListener: ((cookies: string) => void) | null = null
 
+  /** The last refresh POST's result; null until one is attempted. */
+  private lastRefresh: RefreshOutcome | null = null
+
   constructor(token?: string, refreshToken?: string, cookies?: string) {
     if (refreshToken) this.refreshToken = refreshToken
     if (cookies) this.cookies = cookies
@@ -238,6 +281,7 @@ export class CreditKarmaClient {
         refreshToken: this.refreshToken ?? undefined,
         expiresAt: accessTokenExpiry(this.token),
       },
+      skewMs: REFRESH_SKEW_MS,
       // TokenManager only calls this when a refresh token is present (guaranteed
       // by `refreshAccessToken`'s own NO_REFRESH_TOKEN guard / by withAuth only
       // refreshing when it has one), so the callback can assume one exists.
@@ -306,6 +350,11 @@ export class CreditKarmaClient {
    */
   onSessionRotated(listener: (cookies: string) => void): void {
     this.sessionListener = listener
+  }
+
+  /** What the most recent refresh POST did, or null if none has been attempted. */
+  getLastRefresh(): RefreshOutcome | null {
+    return this.lastRefresh
   }
 
   isTokenExpired(): boolean {
@@ -501,7 +550,7 @@ export class CreditKarmaClient {
    * The {@link TokenManager} owns the single-flight: concurrent callers (e.g. a
    * multi-page sync that 401s on several pages at once) coalesce onto ONE
    * in-flight refresh instead of firing duplicate POSTs to
-   * /member/oauth2/refresh (wasted quota, rate-limit risk). The in-flight slot
+   * the token endpoint (wasted quota, rate-limit risk). The in-flight slot
    * clears on settle, so a later expiry refreshes anew.
    */
   async refreshAccessToken(): Promise<string> {
@@ -518,48 +567,113 @@ export class CreditKarmaClient {
    * the {@link TokenManager} refresh callback that wraps this.
    */
   private async doRefreshAccessToken(): Promise<{ accessToken: string; refreshToken?: string }> {
+    try {
+      const tokens = await this.postRefresh()
+      this.lastRefresh = { outcome: 'ok', status: 200, at: Date.now() }
+      return tokens
+    } catch (err) {
+      this.lastRefresh = {
+        outcome: 'failed',
+        ...(err instanceof CkAuthError && err.status !== undefined ? { status: err.status } : {}),
+        ...(err instanceof EdgeBlockedError ? { status: err.status } : {}),
+        message: err instanceof Error ? err.message : String(err),
+        at: Date.now(),
+      }
+      throw err
+    }
+  }
+
+  /**
+   * The refresh POST itself, shaped like the one CK's web app sends
+   * (`transformPropertiesToHeaders` + `refreshViaMobileApi` in prime_web): the
+   * app's client identity, the Bearer access token, `ck-cookie-id` from
+   * CKTRKID, `ck-trace-id` from the token's `glid`, and a JSON
+   * `{refreshToken}` body. NO Cookie header: www → api is a cross-origin fetch
+   * without `credentials: 'include'`, so the browser sends none either.
+   *
+   * Origin and a browser User-Agent are both required to get past Akamai:
+   * without either, the edge answers a canned `200 {"errorCode":"SecErr"}`
+   * (`server: AkamaiNetStorage`, a static file dated 2019) and the request
+   * never reaches CK (measured 2026-10-13). With them, a live refresh returned
+   * `200 {accessToken, refreshToken, traceId}` from `CK-FG-server`.
+   */
+  private async postRefresh(): Promise<{ accessToken: string; refreshToken?: string }> {
     const headers: Record<string, string> = {
+      'ck-client-name': CK_CLIENT_NAME,
+      'ck-client-version': CK_CLIENT_VERSION,
+      'ck-device-type': 'Desktop',
       'content-type': 'application/json',
+      'accept': 'multipart/mixed; deferSpec=20220824, application/json',
       'Origin': 'https://www.creditkarma.com',
       'Referer': 'https://www.creditkarma.com/',
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
-      'ck-client-name': 'web',
-      'ck-client-version': '1.0.0',
-      'ck-device-type': 'Desktop',
+      'User-Agent': USER_AGENT,
     }
 
     if (this.token) {
       headers['authorization'] = `Bearer ${this.token}`
-      // Extract glid from JWT for ck-trace-id
       const glid = decodeJwtClaim(this.token, 'glid')
       if (typeof glid === 'string') headers['ck-trace-id'] = glid
-      // Extract CKTRKID cookie for ck-cookie-id
-      const cookieId = parseCookieHeader(this.cookies ?? '')['CKTRKID'] ?? null
-      if (cookieId) headers['ck-cookie-id'] = cookieId
     }
+    const cookieId = parseCookieHeader(this.cookies ?? '')['CKTRKID']
+    if (cookieId) headers['ck-cookie-id'] = cookieId
 
-    if (this.cookies) headers['Cookie'] = this.cookies
-
-    const res = await fetch(CK_REFRESH_ENDPOINT, {
+    const secrets = [this.token, this.refreshToken, cookieId]
+    debugLog('refresh.request', {
+      url: CK_REFRESH_ENDPOINT,
       method: 'POST',
-      headers,
-      body: JSON.stringify({ refreshToken: this.refreshToken }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      header_names: headerNames(headers),
+      body_shape: { refreshToken: typeof this.refreshToken },
+      access_token: jwtTimes(this.token),
+      refresh_token: jwtTimes(this.refreshToken),
     })
 
+    let res: Response
+    try {
+      res = await fetch(CK_REFRESH_ENDPOINT, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ refreshToken: this.refreshToken }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+    } catch (err) {
+      debugLog('refresh.error', { message: err instanceof Error ? err.message : String(err) })
+      throw err
+    }
+
+    const body = await res.text().catch(() => '')
+    debugLog('refresh.response', {
+      status: res.status,
+      headers: responseHeaders(res.headers),
+      body_head: debugBody(body, secrets),
+    })
+
+    // Akamai's canned refusal: a static `{"errorCode":"SecErr"}` file served
+    // with a 200 by `AkamaiNetStorage` in place of forwarding the request.
+    // CK never saw the token, so this is an edge block — never a rejected
+    // session, which would send the user to sign in for nothing.
+    if (/AkamaiNetStorage/i.test(res.headers.get('server') ?? '')) {
+      throw new EdgeBlockedError(res.status, 'Akamai', { service: 'creditkarma.com', method: 'POST', path: CK_REFRESH_PATH })
+    }
+
     if (!res.ok) {
-      const body = await res.text().catch(() => '')
       // Checked BEFORE the session_rejected throw: an edge block answers 403
       // without CK ever seeing the refresh token, so it must not read as a
       // rejected session (or trigger the re-bootstrap that one gets).
-      throwIfEdgeBlocked(res, body, 'POST', '/member/oauth2/refresh')
+      throwIfEdgeBlocked(res, body, 'POST', CK_REFRESH_PATH)
       const contentType = res.headers.get('content-type') ?? ''
       const looksHtml = !contentType.includes('json') && /^\s*<(!doctype|html)/i.test(body)
       const detail = looksHtml
-        ? '(non-JSON error page — refresh token likely expired or session invalid; sign back into creditkarma.com so the ContextMint Bridge extension can re-read fresh cookies, or paste a fresh Cookie header via ck_set_session)'
+        ? `(non-JSON error page from ${CK_REFRESH_PATH} — CK refused the refresh request itself; the refresh ` +
+          'token may be expired or revoked, or the request shape may have drifted from what creditkarma.com ' +
+          'sends. Run with CK_DEBUG=1 to see the exchange.)'
         // Redact + cap the upstream body (same treatment as the GraphQL path)
         // so tokens echoed back by CK never reach the tool surface.
-        : (truncateErrorMessage(body, 200).trim() || '(empty body)')
+        : (truncateErrorMessage(body, 200).trim() ||
+          // Measured 2026-10-13: CK answers a refresh token it has revoked —
+          // unexpired, but from a session it already ended (an idle tab is
+          // signed out after a while) — with an empty 400.
+          '(empty body — CK has most likely ended the session: the refresh token is unexpired but revoked, ' +
+            'as when an idle tab is signed out. Sign in again on creditkarma.com.)')
       // `session rejected` is the load-bearing phrase: it says we HAD readable
       // credentials and Credit Karma turned them down — as opposed to
       // `no credentials readable`, which means the extension/env gave us
@@ -571,7 +685,22 @@ export class CreditKarmaClient {
         res.status,
       )
     }
-    const json = await res.json() as { accessToken?: string; refreshToken?: string; error?: string }
+
+    let json: { accessToken?: string; refreshToken?: string; error?: string; errorCode?: string; errorMessage?: string }
+    try {
+      json = JSON.parse(body)
+    } catch {
+      throw new Error(`Token refresh error: HTTP ${res.status} with a non-JSON body`)
+    }
+    // An `errorCode` from CK itself (not the Akamai file above) is a rejection.
+    if (json.errorCode) {
+      throw new CkAuthError(
+        'session_rejected',
+        `CK auth: session rejected — Token refresh failed: ${json.errorCode}` +
+          (json.errorMessage ? ` (${json.errorMessage})` : ''),
+        res.status,
+      )
+    }
     if (json.error || !json.accessToken) throw new Error(`Token refresh error: ${json.error ?? 'no accessToken in response'}`)
 
     return { accessToken: json.accessToken, refreshToken: json.refreshToken }
@@ -589,7 +718,7 @@ export class CreditKarmaClient {
         'ck-client-version': clientVersion,
         'Origin': 'https://www.creditkarma.com',
         'Referer': 'https://www.creditkarma.com/',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
+        'User-Agent': USER_AGENT
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),

@@ -5,7 +5,9 @@ actually calls (from `src/client.ts`). Both are unpublished, reverse-engineered
 CK-internal endpoints — verified live by the MCP's own client, not guessed.
 
 - `POST https://api.creditkarma.com/graphql` — the transactions query.
-- `POST https://www.creditkarma.com/member/oauth2/refresh` — access-token refresh.
+- `POST https://api.creditkarma.com/mobile/4.5/oauth2/token` — access-token refresh
+  (the endpoint CK's own web app uses; the old `www.creditkarma.com/member/oauth2/refresh`
+  is retired and answers every request with an HTML 400).
 
 Everything else the MCP exposes (`ck_list_transactions`,
 `ck_get_spending_by_category`, `ck_get_spending_by_merchant`,
@@ -135,18 +137,18 @@ refresh.
 ```sh
 GLID=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1].split('.')[1],'base64url').toString()).glid||'')" "$ACCESS")
 
-curl -s https://www.creditkarma.com/member/oauth2/refresh -X POST \
-  -H 'Content-Type: application/json' \
+curl -s https://api.creditkarma.com/mobile/4.5/oauth2/token -X POST \
+  -H 'content-type: application/json' \
+  -H 'accept: multipart/mixed; deferSpec=20220824, application/json' \
   -H 'Origin: https://www.creditkarma.com' \
   -H 'Referer: https://www.creditkarma.com/' \
   -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-  -H 'ck-client-name: web' \
-  -H 'ck-client-version: 1.0.0' \
+  -H 'ck-client-name: prime_web' \
+  -H 'ck-client-version: 2.0.35' \
   -H 'ck-device-type: Desktop' \
   -H "Authorization: Bearer $ACCESS" \
   -H "ck-trace-id: $GLID" \
   -H "ck-cookie-id: $CKTRKID" \
-  -H "Cookie: CKTRKID=$CKTRKID; CKAT=$ACCESS%3B$REFRESH" \
   --data "$(jq -n --arg rt "$REFRESH" '{refreshToken:$rt}')" > /tmp/ck-refresh.json
 
 ACCESS=$(jq -r '.accessToken' /tmp/ck-refresh.json)
@@ -154,9 +156,15 @@ NEW_REFRESH=$(jq -r '.refreshToken // empty' /tmp/ck-refresh.json)
 [ -n "$NEW_REFRESH" ] && REFRESH=$NEW_REFRESH   # CK doesn't always rotate it
 ```
 
-Failure shapes (`client.ts`'s `doRefreshAccessToken`):
-- Non-2xx with an HTML body → refresh token dead / session invalid. Re-sign
-  into `creditkarma.com` and re-run `fpx cookies -p creditkarma`.
+Failure shapes (`client.ts`'s `postRefresh`):
+- `200` `{"errorCode":"SecErr"}` with `server: AkamaiNetStorage` → Akamai's
+  canned block, so the request never reached CK (missing `Origin` /
+  browser `User-Agent`). Fix the request; don't re-sign in.
+- Empty `400` from `CK-FG-server` → CK has ended the session (an idle tab is
+  signed out, even with an unexpired token). Re-sign into `creditkarma.com`
+  and re-run `fpx cookies -p creditkarma`.
+- Non-2xx with an HTML body → CK refused the request itself (an HTML 400 is
+  what the retired `/member/oauth2/refresh` URL gives *any* request).
 - Non-2xx with a JSON body → the (redacted/capped) body is the detail.
 - 2xx with `{"error": "..."}` and no `accessToken` → treat the same as a
   non-2xx failure.

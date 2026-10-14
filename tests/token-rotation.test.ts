@@ -6,7 +6,7 @@ import type { AppContext } from '../src/index.js'
 import type { TransactionPage } from '../src/client.js'
 import * as auth from '../src/auth.js'
 
-// Every call to CK's /member/oauth2/refresh ROTATES the refresh token, and the
+// Every call to CK's token refresh endpoint ROTATES the refresh token, and the
 // browser and this MCP share one CKAT cookie holding it. So a needless refresh
 // does real damage: it invalidates the copy in the browser's cookie, and CK
 // then signs the tab out — reported to the user as "logged you out due to

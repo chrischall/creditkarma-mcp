@@ -30,6 +30,12 @@
           "format": "string"
         },
         {
+          "name": "CK_DEBUG",
+          "description": "Set to 1 to trace auth to stderr: credential source, cookie names, token issue/expiry times, and the token-refresh exchange. Never logs token or cookie values.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
           "name": "CK_DB_PATH",
           "description": "Path to SQLite database file (default ~/.creditkarma-mcp/transactions.db).",
           "isRequired": false,

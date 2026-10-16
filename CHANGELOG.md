@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.4](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.3...v3.3.4) (2026-10-16)
+
+
+### Bug Fixes
+
+* stop runaway ck_query_sql queries and allow the Intuit vault host on hosted connectors ([#249](https://github.com/chrischall/creditkarma-mcp/issues/249)) ([ec25e98](https://github.com/chrischall/creditkarma-mcp/commit/ec25e9822f6fa643ac9af35706fba401d597d5f6))
+
 ## [3.3.3](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.2...v3.3.3) (2026-10-14)
 
 

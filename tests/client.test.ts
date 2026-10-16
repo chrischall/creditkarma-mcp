@@ -67,8 +67,10 @@ const mockPage: TransactionPage = {
   pageInfo: { startCursor: 'start', endCursor: 'end', hasNextPage: false, hasPreviousPage: false }
 }
 
+// Real Responses: every request is read through the bounded transport
+// (src/http.ts), which streams the body.
 const mockResponse = (status: number, body?: unknown) =>
-  ({ ok: status >= 200 && status < 300, status, json: async () => body }) as Response
+  new Response(body === undefined ? null : JSON.stringify(body), { status })
 
 describe('CreditKarmaClient — fetchPage', () => {
   let client: CreditKarmaClient
@@ -196,31 +198,29 @@ describe('CreditKarmaClient — fetchPage', () => {
   })
 
   it('attaches the response body to the HTTP error when present', async () => {
-    const fakeRes = {
-      ok: false,
-      status: 500,
-      text: () => Promise.resolve('upstream exploded'),
-    } as unknown as Response
+    const fakeRes = new Response('upstream exploded', { status: 500 })
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(fakeRes)
     await expect(client.fetchPage()).rejects.toThrow(/HTTP 500: upstream exploded/)
   })
 
-  it('falls back to bare status when the error body read fails', async () => {
-    const fakeRes = {
-      ok: false,
-      status: 502,
-      text: () => Promise.reject(new Error('stream broken')),
-    } as unknown as Response
-    vi.spyOn(global, 'fetch').mockResolvedValueOnce(fakeRes)
+  // The transport reads (and caps) the body before anything else sees the
+  // response, so a stream that breaks mid-body fails the request itself.
+  const brokenBody = (status: number) => new Response(new ReadableStream({
+    pull(controller) { controller.error(new Error('stream broken')) },
+  }), { status })
+
+  it('fails the request when the error body stream breaks', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(brokenBody(502))
+    await expect(client.fetchPage()).rejects.toThrow('stream broken')
+  })
+
+  it('falls back to bare status when the error body is empty', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(new Response(null, { status: 502 }))
     await expect(client.fetchPage()).rejects.toThrow('HTTP 502')
   })
 
   it('attaches the response body to the post-429 retry HTTP error', async () => {
-    const retryRes = {
-      ok: false,
-      status: 503,
-      text: () => Promise.resolve('still overloaded'),
-    } as unknown as Response
+    const retryRes = new Response('still overloaded', { status: 503 })
     vi.spyOn(global, 'fetch')
       .mockResolvedValueOnce(mockResponse(429))
       .mockResolvedValueOnce(retryRes)
@@ -379,26 +379,18 @@ describe('CreditKarmaClient — refresh token', () => {
     await expect(c.refreshAccessToken()).rejects.toThrow(/…/)
   })
 
-  it('refreshAccessToken survives a body-read failure', async () => {
+  it('refreshAccessToken fails on a body stream that breaks', async () => {
     const c = new CreditKarmaClient('tok', 'ref')
-    const fakeRes = {
-      ok: false,
-      status: 502,
-      text: () => Promise.reject(new Error('stream broken')),
-      headers: new Headers({ 'content-type': 'text/plain' })
-    } as unknown as Response
-    vi.spyOn(global, 'fetch').mockResolvedValueOnce(fakeRes)
-    await expect(c.refreshAccessToken()).rejects.toThrow('HTTP 502')
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce(new Response(new ReadableStream({
+      pull(controller) { controller.error(new Error('stream broken')) },
+    }), { status: 502, headers: { 'content-type': 'text/plain' } }))
+    await expect(c.refreshAccessToken()).rejects.toThrow('stream broken')
   })
 
   it('refreshAccessToken handles error responses with no content-type header', async () => {
     const c = new CreditKarmaClient('tok', 'ref')
-    const fakeRes = {
-      ok: false,
-      status: 500,
-      text: () => Promise.resolve('oops'),
-      headers: new Headers()  // no content-type
-    } as unknown as Response
+    const fakeRes = new Response(new TextEncoder().encode('oops'), { status: 500 })  // no content-type
+    expect(fakeRes.headers.get('content-type')).toBeNull()
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(fakeRes)
     await expect(c.refreshAccessToken()).rejects.toThrow(/HTTP 500.*oops/)
   })

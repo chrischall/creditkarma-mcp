@@ -33,6 +33,11 @@ env:
       Optional override for the SQLite database file. Defaults to
       ~/.creditkarma-mcp/transactions.db. Set to a custom absolute path if you
       want the data stored elsewhere.
+  - name: CK_CREDIT_BUREAU
+    required: false
+    help: >-
+      Credit report used for card and loan balances that are not linked
+      accounts: "transunion" (default) or "equifax".
   - name: CK_SYNC_MAX_PAGES
     required: false
     help: >-
@@ -54,14 +59,19 @@ egress:
     # CKAT/CKTRKID cookies out of the signed-in tab over a loopback socket
     # (src/auth.ts) and every request after that is a plain Node fetch from
     # this process, in every mode (CK_COOKIES, ck_set_session, fetchproxy).
-    # None of these hosts redirects (checked 2026-08-28).
+    # None of these hosts redirects (checked 2026-08-28; vault.api.intuit.com,
+    # a POST JSON API, added 2026-10-16).
     #
-    # GraphQL gateway — every ck_sync_transactions call (src/client.ts).
+    # GraphQL gateway — every ck_sync_transactions call — and the token
+    # refresh POST (/mobile/4.5/oauth2/token) (src/client.ts).
     - api.creditkarma.com
-    # Token refresh POST (/member/oauth2/refresh) and the signed-in
-    # /networth/transactions page read during persisted-query-hash
-    # rediscovery (src/client.ts, src/queryHash.ts).
+    # The signed-in pages read during persisted-query-hash rediscovery
+    # (/networth/transactions, /credit-health/…, /connect/manage-accounts;
+    # src/queryHash.ts).
     - www.creditkarma.com
+    # Intuit's account vault — linked-account balances, refreshed by every
+    # sync (src/vault.ts, POST /v2/search/connections).
+    - vault.api.intuit.com
     # Next.js chunk fetches during hash rediscovery. The host is scraped
     # from the page at runtime (src/queryHash.ts CHUNK_URL_RE), so it is
     # not pinned in code; this is the only CDN CK has served.

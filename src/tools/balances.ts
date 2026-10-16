@@ -6,7 +6,7 @@ import { OPERATIONS } from '../client.js'
 import {
   findAccountByUrn, findUnlinkedAccount, setLinkedBalance, pruneLinkedAccounts,
   upsertCreditReportAccount, pruneCreditReportAccounts, loadMatchSnapshots, setCreditReportMatches,
-  listBalances, type LinkedBalanceRow, type Database,
+  listBalances, inTransaction, type LinkedBalanceRow, type Database,
 } from '../db.js'
 import { BUREAU_CODE, newestReportDate, parseCreditReport, type Bureau } from '../creditReport.js'
 import { parseIdxAuthToken, parseVaultAccounts, searchVaultConnections, type VaultAccount } from '../vault.js'
@@ -132,17 +132,6 @@ function matchDuplicates(db: Database): number {
   const matches = matchCreditReportAccounts(creditReport, linked)
   setCreditReportMatches(db, matches)
   return matches.size
-}
-
-function inTransaction(db: Database, fn: () => void): void {
-  db.exec('BEGIN')
-  try {
-    fn()
-    db.exec('COMMIT')
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
-  }
 }
 
 // ---------------------------------------------------------------------------

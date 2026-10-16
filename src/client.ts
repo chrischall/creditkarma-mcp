@@ -9,6 +9,7 @@ import { TokenManager } from '@chrischall/mcp-utils/session'
 import { CkAuthError } from './authError.js'
 import * as queryHash from './queryHash.js'
 import { debugLog, jwtTimes, debugBody, headerNames, responseHeaders } from './debug.js'
+import { boundedFetch, USER_AGENT } from './http.js'
 
 /**
  * Fallback lifetime assumed for an access token whose real expiry can't be
@@ -86,8 +87,6 @@ export const TRANSACTION_QUERY_HASH =
 
 export const GRAPHQL_ENDPOINT = 'https://api.creditkarma.com/graphql'
 
-const USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
 
 /**
  * A safelisted CK operation and the web app it belongs to.
@@ -179,14 +178,8 @@ export interface RefreshOutcome {
   at: number
 }
 
-/**
- * Abort deadline for every Credit Karma / Intuit request (GraphQL, token
- * refresh, vault search). Without one a hung CK or Akamai connection left
- * ck_sync_transactions pending until the host timed the whole call out
- * (fleet-audit#389). Hash discovery has its own shared budget
- * (`DISCOVERY_TIMEOUT_MS` in src/queryHash.ts).
- */
-export const REQUEST_TIMEOUT_MS = 30_000
+// The per-request deadline lives with the shared transport (src/http.ts).
+export { REQUEST_TIMEOUT_MS } from './http.js'
 
 export interface TransactionPage {
   transactions: ApiTransaction[]
@@ -629,18 +622,18 @@ export class CreditKarmaClient {
 
     let res: Response
     try {
-      res = await fetch(CK_REFRESH_ENDPOINT, {
+      res = await boundedFetch(CK_REFRESH_ENDPOINT, {
         method: 'POST',
         headers,
         body: JSON.stringify({ refreshToken: this.refreshToken }),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
     } catch (err) {
       debugLog('refresh.error', { message: err instanceof Error ? err.message : String(err) })
       throw err
     }
 
-    const body = await res.text().catch(() => '')
+    // Already buffered by the transport, so reading it cannot fail.
+    const body = await res.text()
     debugLog('refresh.response', {
       status: res.status,
       headers: responseHeaders(res.headers),
@@ -707,7 +700,7 @@ export class CreditKarmaClient {
   }
 
   private post(url: string, body: unknown, token: string, clientName: string, clientVersion: string): Promise<Response> {
-    return fetch(url, {
+    return boundedFetch(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -721,7 +714,6 @@ export class CreditKarmaClient {
         'User-Agent': USER_AGENT
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
   }
 }
@@ -872,16 +864,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-/** Read a response body, degrading to '' on any failure (broken stream, or a
- *  stubbed Response without `.text`). Split out from {@link httpErrorMessage}
- *  because `fetchPage` needs the body BEFORE it knows whether this is a
- *  retryable gateway blip or a real error — and a body can only be read once. */
-async function readBodyOrEmpty(res: Response): Promise<string> {
-  try {
-    return typeof res.text === 'function' ? await res.text() : ''
-  } catch {
-    return ''
-  }
+/** Read a response body. Split out from {@link httpErrorMessage} because
+ *  `fetchPage` needs the body BEFORE it knows whether this is a retryable
+ *  gateway blip or a real error — and a body can only be read once. The
+ *  transport (src/http.ts) has already buffered it, so a broken stream fails
+ *  the request there rather than here. */
+function readBodyOrEmpty(res: Response): Promise<string> {
+  return res.text()
 }
 
 /**

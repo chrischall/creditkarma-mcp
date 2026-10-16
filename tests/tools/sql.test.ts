@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { withCallSignal } from '@chrischall/mcp-utils'
 import { createTestHarness } from '@chrischall/mcp-utils/test'
-import { handleQuerySql, registerSqlTools, DEFAULT_MAX_ROWS, MAX_ROWS_LIMIT } from '../../src/tools/sql.js'
+import { handleQuerySql, registerSqlTools, DEFAULT_MAX_ROWS, MAX_ROWS_LIMIT, SQL_TIME_BUDGET_MS } from '../../src/tools/sql.js'
 import { initDb, upsertAccount, upsertCategory, upsertMerchant, upsertTransaction } from '../../src/db.js'
 import { CreditKarmaClient } from '../../src/client.js'
 import type { AppContext } from '../../src/index.js'
@@ -173,6 +177,62 @@ describe('ck_query_sql', () => {
   it('restores write access even when the query throws', async () => {
     await expect(handleQuerySql({ sql: 'SELECT * FROM nonexistent_table' }, ctx)).rejects.toThrow()
     expect(() => upsertMerchant(ctx.db, { id: 'm3', name: 'Blue Bottle' })).not.toThrow()
+  })
+})
+
+// fleet-audit#1232: node:sqlite has no interrupt, so a query that never yields
+// a row (here: count(*) over an unbounded recursive CTE) used to block the
+// whole server forever — the row cap never gets a chance to fire.
+describe('ck_query_sql time budget', () => {
+  const RUNAWAY = 'WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n) SELECT count(*) FROM n'
+
+  it('has a bounded default budget', () => {
+    expect(SQL_TIME_BUDGET_MS).toBeGreaterThanOrEqual(1_000)
+    expect(SQL_TIME_BUDGET_MS).toBeLessThanOrEqual(60_000)
+  })
+
+  it('stops a runaway query that yields no rows, and the server keeps answering', async () => {
+    const ctx = makeCtx()
+    const started = Date.now()
+    await expect(handleQuerySql({ sql: RUNAWAY }, ctx, { timeoutMs: 300 }))
+      .rejects.toThrow(/time budget/)
+    expect(Date.now() - started).toBeLessThan(5_000)
+    const after = await handleQuerySql({ sql: 'SELECT id FROM transactions' }, ctx)
+    expect(after.rows).toEqual([{ id: 'tx1' }])
+  })
+
+  it('stops the query when the tool call is cancelled', async () => {
+    const ctx = makeCtx()
+    const caller = new AbortController()
+    const pending = withCallSignal(caller.signal, () => handleQuerySql({ sql: RUNAWAY }, ctx))
+    setTimeout(() => caller.abort(new Error('caller cancelled')), 100)
+    await expect(pending).rejects.toThrow('caller cancelled')
+  })
+
+  it('refuses at once when the call is already cancelled', async () => {
+    const ctx = makeCtx()
+    const caller = new AbortController()
+    caller.abort('gone')
+    await expect(withCallSignal(caller.signal, () => handleQuerySql({ sql: 'SELECT 1' }, ctx)))
+      .rejects.toThrow('gone')
+  })
+
+  it('reads a file-backed database through a read-only connection', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ck-sql-'))
+    try {
+      const db = initDb(join(dir, 'transactions.db'))
+      upsertMerchant(db, { id: 'm1', name: 'Starbucks' })
+      const ctx: AppContext = { client: new CreditKarmaClient(), db }
+      const result = await handleQuerySql({ sql: 'SELECT name FROM merchants' }, ctx)
+      expect(result.rows).toEqual([{ name: 'Starbucks' }])
+      await expect(handleQuerySql({
+        sql: "WITH x AS (SELECT 'evil' AS id) INSERT INTO merchants (id, name) SELECT id, id FROM x",
+      }, ctx)).rejects.toThrow(/readonly/i)
+      expect(db.prepare("SELECT count(*) AS n FROM merchants WHERE id = 'evil'").get()).toEqual({ n: 0 })
+      db.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

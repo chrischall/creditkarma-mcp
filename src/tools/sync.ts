@@ -1,10 +1,10 @@
 import { z } from 'zod'
-import { minifiedResult } from '@chrischall/mcp-utils'
+import { minifiedResult, shiftIsoDate, toIsoDateUtc } from '@chrischall/mcp-utils'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import {
   upsertAccount, upsertCategory, upsertMerchant, upsertTransaction,
-  getSyncState, setSyncState, resolveAccountId, attachUrn, prunePendingTransactions
+  getSyncState, setSyncState, resolveAccountId, attachUrn, prunePendingTransactions, inTransaction
 } from '../db.js'
 import { deriveAccountId } from '../accountId.js'
 import { loadAuthIntoClient } from '../auth.js'
@@ -152,7 +152,7 @@ export async function handleSyncTransactions(
     ? args.max_pages
     : envMaxPages()
 
-  const today = utcDateString(new Date())
+  const today = toIsoDateUtc(new Date())
   const lastSyncDate = getSyncState(ctx.db, 'last_sync_date')
 
   const savedCursor = getSyncState(ctx.db, 'last_cursor') ?? undefined
@@ -165,7 +165,7 @@ export async function handleSyncTransactions(
   // Cutoff: stop fetching pages when tx.date < (lastSyncDate - 30 days)
   // Unless force_full=true, no prior sync, or we are finishing a full backfill.
   const cutoffDate = (!args.force_full && !fullCheckpoint && lastSyncDate)
-    ? subtractDays(lastSyncDate, 30)
+    ? shiftIsoDate(lastSyncDate, -30)
     : null
   const mode: ResumeMode = cutoffDate ? 'incremental' : 'full'
 
@@ -235,8 +235,7 @@ export async function handleSyncTransactions(
       }
     }
 
-    ctx.db.exec('BEGIN')
-    try {
+    inTransaction(ctx.db, () => {
       for (const tx of page.transactions) {
         const exists = ctx.db
           .prepare('SELECT id FROM transactions WHERE id = ?')
@@ -269,11 +268,7 @@ export async function handleSyncTransactions(
         if (exists) { updatedCount++ } else { newCount++ }
         totalCount++
       }
-      ctx.db.exec('COMMIT')
-    } catch (err) {
-      ctx.db.exec('ROLLBACK')
-      throw err
-    }
+    })
 
     // Stop if we've reached older-than-cutoff transactions
     if (cutoffDate && page.transactions.length > 0) {
@@ -405,20 +400,6 @@ async function refreshOrThrow(ctx: AppContext, tokenKnownDead = false): Promise<
   }
 }
 
-function subtractDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr)
-  d.setUTCDate(d.getUTCDate() - days)
-  return utcDateString(d)
-}
-
-/** Returns YYYY-MM-DD using UTC methods to avoid timezone-shift issues
- *  when the Date was constructed from an ISO date string (UTC midnight). */
-function utcDateString(d: Date): string {
-  const y = d.getUTCFullYear()
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(d.getUTCDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
 
 export function registerSyncTools(server: McpServer, ctx: AppContext): void {
   server.registerTool(

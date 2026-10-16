@@ -14,6 +14,7 @@
  * Session cookies are required — logged out, the same URL serves the *login*
  * bundle, which carries no manifest.
  */
+import { boundedFetch, USER_AGENT } from './http.js'
 
 /** The signed-in page whose bundle carries the manifest. */
 export const TRANSACTIONS_PAGE_URL = 'https://www.creditkarma.com/networth/transactions'
@@ -63,8 +64,6 @@ export const MAX_CHUNKS_SCANNED = 40
  */
 export const DISCOVERY_TIMEOUT_MS = 15_000
 
-const USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
 
 /** Chunk URLs for one CK app's bundle — the place its manifest lives. */
 function chunkUrlRe(bundle: string): RegExp {
@@ -80,7 +79,9 @@ async function getText(
   signal: AbortSignal,
 ): Promise<string | null> {
   try {
-    const res = await fetch(url, { headers, signal })
+    // The shared scan budget (`signal`) is the deadline here, not a
+    // per-request timeout.
+    const res = await boundedFetch(url, { headers, signal }, { timeoutMs: false })
     return res.ok ? await res.text() : null
   } catch {
     // Any transport failure — including the budget expiring — is just "not

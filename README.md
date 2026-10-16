@@ -225,7 +225,7 @@ sync_state   (key, value)
 - `ck_set_session` refuses to save a refresh token whose JWT `exp` is already in the past — prevents stale credentials from polluting the saved session
 - The fetchproxy path reads cookies directly from the user's browser via `chrome.cookies.get`, but it is **not** memory-only: every token refresh rotates the session, and the rotated `CKAT`/`CKTRKID` Cookie header is saved to the saved-session file (`~/.creditkarma-mcp/session`, or `CK_SESSION_PATH`) at mode 0600 in a 0700 directory — fetchproxy-only users included — so a restart can recover without re-reading the browser. Call `ck_forget_session` (or delete that file) to remove it
 - The server never logs credentials (including under `CK_DEBUG=1`, which logs names, timings and redacted bodies only); warnings go to stderr only (stdout is reserved for the MCP JSON-RPC stream)
-- Only `SELECT` queries are permitted via `ck_query_sql` — no writes to Credit Karma; the underlying `node:sqlite` `prepare()` also rejects multi-statement input
+- Only `SELECT` queries are permitted via `ck_query_sql` — no writes to Credit Karma. The query runs against a read-only connection, and `node:sqlite`'s `prepare()` compiles only the FIRST statement of multi-statement input: anything after the first `;` is silently ignored, never executed
 
 ## Uninstall / Reset
 

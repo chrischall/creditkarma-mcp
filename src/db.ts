@@ -7,6 +7,18 @@ import type { BalanceSnapshot } from './matching.js'
 
 export type Database = DatabaseSync
 
+/** Run `fn` inside BEGIN/COMMIT, rolling back (and rethrowing) if it throws. */
+export function inTransaction(db: Database, fn: () => void): void {
+  db.exec('BEGIN')
+  try {
+    fn()
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+}
+
 const CURRENT_VERSION = 3
 
 /**
@@ -203,14 +215,7 @@ export function initDb(dbPath: string): Database {
     : 0
 
   for (let v = currentVersion + 1; v <= CURRENT_VERSION; v++) {
-    db.exec('BEGIN')
-    try {
-      MIGRATIONS[v](db)
-      db.exec('COMMIT')
-    } catch (err) {
-      db.exec('ROLLBACK')
-      throw err
-    }
+    inTransaction(db, () => MIGRATIONS[v](db))
   }
 
   if (dbPath !== ':memory:') {
@@ -595,17 +600,12 @@ export function backfillAccountIds(db: Database): { txsUpdated: number, accounts
 
   if (updates.length === 0) return { txsUpdated: 0, accountsCreated: 0 }
 
-  db.exec('BEGIN')
-  try {
+  inTransaction(db, () => {
     for (const acct of accounts.values()) upsertAccount(db, acct)
     const stmt = db.prepare('UPDATE transactions SET account_id = ? WHERE id = ?')
     for (const u of updates) stmt.run(u.accountId, u.txId)
     db.prepare("DELETE FROM accounts WHERE id = ''").run()
-    db.exec('COMMIT')
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
-  }
+  })
 
   return { txsUpdated: updates.length, accountsCreated: accounts.size }
 }

@@ -51,14 +51,15 @@ describe('request timeouts', () => {
   })
 
   it('a request that never answers fails once the deadline passes', async () => {
-    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => AbortSignal.abort(new DOMException('timed out', 'TimeoutError')))
-    vi.spyOn(global, 'fetch').mockImplementation((_url, init) =>
-      new Promise((_resolve, reject) => {
-        const s = (init as RequestInit).signal!
-        if (s.aborted) reject(s.reason)
-        s.addEventListener('abort', () => reject(s.reason))
-      }),
-    )
-    await expect(searchVaultConnections('idx-token')).rejects.toThrow(/timed out/)
+    vi.useFakeTimers()
+    try {
+      vi.spyOn(global, 'fetch').mockImplementation(() => new Promise(() => undefined))
+      const pending = searchVaultConnections('idx-token')
+      const settled = expect(pending).rejects.toThrow(/timed out after 30000ms/)
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS)
+      await settled
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

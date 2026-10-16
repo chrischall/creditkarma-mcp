@@ -98,8 +98,8 @@ The MCP handles auth automatically once any of the three paths is configured.
 |------|-------------|
 | `ck_list_transactions(start_date?, end_date?, account?, category?, merchant?, status?, min_amount?, max_amount?, limit?, offset?)` | Filtered, paginated transaction list |
 | `ck_get_recent_transactions(limit?)` | N most recent transactions (default 25; `limit` on every listing tool is a whole number from 1 to 500, `offset` 0 or more) |
-| `ck_get_spending_by_category(start_date?, end_date?)` | Spending totals grouped by category |
-| `ck_get_spending_by_merchant(start_date?, end_date?, limit?)` | Spending totals grouped by merchant |
+| `ck_get_spending_by_category(start_date?, end_date?, account?)` | Spending totals grouped by category |
+| `ck_get_spending_by_merchant(start_date?, end_date?, category?, limit?)` | Spending totals grouped by merchant |
 | `ck_get_account_summary` | Transaction counts and totals per account |
 | `ck_get_account_balances(refresh?, include_matched?)` | Balance per account: institution, type, last 4, current balance, available credit and credit limit (cards), `balance_as_of`, `source` (`linked` — live from the aggregator, cards and loans included — or `credit_report`) and `stale`. Liabilities are negative. Prefer `linked` figures; credit-report balances lag 2–5 weeks — say so when quoting one. A credit-report row duplicating a linked account is hidden unless `include_matched` |
 | `ck_query_sql(sql, max_rows?)` | Read-only SQL query against the local database (SELECT only; at most `max_rows` rows, default 500 / max 5000 — `truncated: true` means page with LIMIT/OFFSET or aggregate) |
@@ -162,4 +162,4 @@ sync_state   (key, value)
 - Amounts: negative = expense/debit, positive = credit/income
 - `ck_query_sql` only allows SELECT — no writes to Credit Karma data
 - Sync saves a resume cursor — interrupted syncs can be resumed automatically
-- `accounts.id` is a synthesized stable key in the form `<provider>|<last4>` (e.g. `Citi|2630`, `Ally|7133`) because CK's API returns empty `account.id` strings. The same card under two provider-name spellings shows as two rows.
+- `accounts.id` is a synthesized stable key in the form `<provider>|<last4>` (e.g. `Citi|2630`, `Ally|7133`) because CK's API returns empty `account.id` strings. The same card seen under two provider-name spellings (e.g. `X` vs `X - Credit Card`) is folded into one row: the account URN, or an `account_aliases` entry, resolves both spellings to the same id.

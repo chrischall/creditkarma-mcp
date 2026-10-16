@@ -120,6 +120,6 @@ describe('refresh call is traced under CK_DEBUG', () => {
     const c = new CreditKarmaClient('a', 'r', 'CKTRKID=t')
     vi.spyOn(global, 'fetch').mockRejectedValueOnce(new TypeError('fetch failed'))
     await c.refreshAccessToken().catch(() => {})
-    expect(logged()).toContain('refresh.error {"message":"fetch failed"}')
+    expect(logged()).toContain('refresh.error {"message":"Could not reach api.creditkarma.com: fetch failed')
   })
 })

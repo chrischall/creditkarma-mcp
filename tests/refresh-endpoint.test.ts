@@ -242,7 +242,9 @@ describe('refresh outcome is recorded for diagnostics', () => {
     const c = new CreditKarmaClient(access(600), REFRESH, 'CKTRKID=abc')
     vi.spyOn(global, 'fetch').mockRejectedValueOnce(new TypeError('fetch failed'))
     await c.refreshAccessToken().catch(() => {})
-    expect(c.getLastRefresh()).toMatchObject({ outcome: 'failed', message: 'fetch failed' })
+    // The transport names the host a refused connection was for (fleet-audit#1187).
+    expect(c.getLastRefresh()).toMatchObject({ outcome: 'failed' })
+    expect(c.getLastRefresh()?.message).toMatch(/^Could not reach api\.creditkarma\.com: fetch failed/)
     expect(c.getLastRefresh()?.status).toBeUndefined()
   })
 

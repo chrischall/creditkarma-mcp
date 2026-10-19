@@ -5,6 +5,12 @@ summary: >-
   Credit Karma transaction tracking for Claude — sync and query your
   transactions, spending by category and merchant, and account summaries via
   natural language
+examples:
+  - prompt: Sync my latest Credit Karma transactions, then show what I spent by category last month.
+    note: Syncs into the local database, then groups debits by category.
+  - prompt: Who were my top 10 merchants by total spend so far this year?
+  - prompt: What are the current balances on all my Credit Karma accounts?
+    note: Reads linked-account and credit-report balances.
 #
 # Hosting note (a comment, not user-facing summary text): this is a
 # BROWSER-BRIDGE MCP — it reaches its site through the user's signed-in

@@ -79,7 +79,7 @@ describe('sync does not rotate a refresh token it did not need to', () => {
     // These are unit tests of the refresh decision: nothing may reach the
     // network. The post-sync balance refresh used to go out for real (its
     // query-hash lookup has no deadline), which hung CI past vitest's 5 s.
-    fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'))
+    fetchSpy = vi.spyOn(global, 'fetch').mockRejectedValue(new TypeError('fetch failed'))
     ctx = {
       client: new CreditKarmaClient(),
       db: initDb(':memory:')

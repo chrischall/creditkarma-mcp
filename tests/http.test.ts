@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { RequestTimeoutError, ResponseTooLargeError } from '@chrischall/mcp-utils'
+import { McpToolError, RequestTimeoutError, ResponseTooLargeError } from '@chrischall/mcp-utils'
 import { boundedFetch, MAX_RESPONSE_BYTES, REQUEST_TIMEOUT_MS, USER_AGENT } from '../src/http.js'
 
 // fleet-audit#1236: every CK / Intuit request goes through one bounded fetch —
@@ -52,13 +52,33 @@ describe('boundedFetch', () => {
   })
 
   it('names the host when the network refuses the request', async () => {
-    vi.spyOn(global, 'fetch').mockRejectedValue(new TypeError('fetch failed'))
-    const err = await boundedFetch('https://vault.api.intuit.com/v2/search', {}).catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(Error)
-    expect((err as Error).message).toMatch(/vault\.api\.intuit\.com/)
-    expect((err as Error).message).toMatch(/fetch failed/)
-    expect((err as Error).message).toMatch(/egress/)
+    vi.spyOn(global, 'fetch').mockRejectedValue(
+      new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) }),
+    )
+    const err = await boundedFetch('https://vault.api.intuit.com/v2/search?q=secret', {}).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(McpToolError)
+    expect((err as McpToolError).kind).toBe('transport')
+    expect((err as Error).message).toBe('Could not reach Credit Karma at vault.api.intuit.com (ECONNREFUSED: connect ECONNREFUSED).')
+    expect((err as Error).message).not.toContain('secret')
+    expect((err as McpToolError).hint).toMatch(/proxy|firewall/i)
     expect((err as Error).cause).toBeInstanceOf(TypeError)
+  })
+
+  it("points a hosted connector's egress-proxy refusal at the registration's allow-list", async () => {
+    const aborted = Object.assign(new Error('Proxy response (403) !== 200 when HTTP Tunneling'), { code: 'UND_ERR_ABORTED' })
+    vi.spyOn(global, 'fetch').mockRejectedValue(
+      new TypeError('fetch failed', { cause: new Error('Request was cancelled.', { cause: aborted }) }),
+    )
+    const err = await boundedFetch('https://vault.api.intuit.com/v2/search', {}).catch((e: unknown) => e)
+    expect((err as Error).message).toMatch(/vault\.api\.intuit\.com/)
+    expect((err as McpToolError).hint).toMatch(/egress allow-list/)
+    expect((err as McpToolError).hint).not.toMatch(/VPN|DNS/)
+  })
+
+  it('passes a TypeError that is not a transport failure through unchanged', async () => {
+    const bad = new TypeError('Invalid header value')
+    vi.spyOn(global, 'fetch').mockRejectedValue(bad)
+    await expect(boundedFetch('https://api.example.com/x', {})).rejects.toBe(bad)
   })
 
   it('passes any other error through unchanged', async () => {

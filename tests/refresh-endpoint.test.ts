@@ -244,7 +244,7 @@ describe('refresh outcome is recorded for diagnostics', () => {
     await c.refreshAccessToken().catch(() => {})
     // The transport names the host a refused connection was for (fleet-audit#1187).
     expect(c.getLastRefresh()).toMatchObject({ outcome: 'failed' })
-    expect(c.getLastRefresh()?.message).toMatch(/^Could not reach api\.creditkarma\.com: fetch failed/)
+    expect(c.getLastRefresh()?.message).toMatch(/^Could not reach Credit Karma at api\.creditkarma\.com\./)
     expect(c.getLastRefresh()?.status).toBeUndefined()
   })
 

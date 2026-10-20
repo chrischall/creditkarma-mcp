@@ -8,7 +8,7 @@
  * response as a `Response`, so the callers (and `TokenManager.withAuth`, which
  * needs a `Response` to see a 401) read it exactly as before.
  */
-import { fetchBounded } from '@chrischall/mcp-utils'
+import { describeTransportFailure, fetchBounded } from '@chrischall/mcp-utils'
 
 /**
  * A browser User-Agent. Akamai in front of creditkarma.com answers a canned
@@ -54,17 +54,11 @@ export async function boundedFetch(url: string, init: RequestInit, opts: Bounded
       service: host,
     }))
   } catch (err) {
-    // undici reports a refused connection — including a hosted connector's
-    // egress fence refusing a host its manifest does not allow — as a bare
-    // `TypeError: fetch failed` that names nothing. Say which host it was.
-    if (err instanceof TypeError) {
-      throw new Error(
-        `Could not reach ${host}: ${err.message}. On a hosted connector, check that ${host} ` +
-          "is in the registration's egress allowlist.",
-        { cause: err },
-      )
-    }
-    throw err
+    // undici reports every transport failure — DNS, a refused connection, a
+    // hosted connector's egress proxy refusing a host its manifest does not
+    // allow — as a bare `TypeError: fetch failed` that names nothing. Say
+    // which host it was, the cause code, and a hint keyed to it.
+    throw describeTransportFailure(err, url, 'Credit Karma') ?? err
   }
   // fetchBounded assembles the bytes into a fresh ArrayBuffer-backed array.
   return new Response(NULL_BODY_STATUSES.has(res.status) ? null : (body as Uint8Array<ArrayBuffer>), {

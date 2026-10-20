@@ -71,17 +71,26 @@ describe('access-token expiry tracks the JWT, not a synthetic window', () => {
 describe('sync does not rotate a refresh token it did not need to', () => {
   let ctx: AppContext
   let originalDisable: string | undefined
+  let fetchSpy: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
     originalDisable = process.env.CK_DISABLE_FETCHPROXY
     process.env.CK_DISABLE_FETCHPROXY = '1'
+    // These are unit tests of the refresh decision: nothing may reach the
+    // network. The post-sync balance refresh used to go out for real (its
+    // query-hash lookup has no deadline), which hung CI past vitest's 5 s.
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'))
     ctx = {
       client: new CreditKarmaClient(),
       db: initDb(':memory:')
     } as AppContext
+    // The post-sync balance refresh is out of scope here; it reports a
+    // failed source rather than failing the sync, so a rejection is enough.
+    vi.spyOn(ctx.client, 'runOperation').mockRejectedValue(new Error('balance refresh not under test'))
   })
 
   afterEach(() => {
+    expect(fetchSpy).not.toHaveBeenCalled()
     if (originalDisable === undefined) delete process.env.CK_DISABLE_FETCHPROXY
     else process.env.CK_DISABLE_FETCHPROXY = originalDisable
     ctx.db.close()

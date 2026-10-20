@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.3.5](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.4...v3.3.5) (2026-10-20)
+
+
+### Bug Fixes
+
+* **deps:** bump dotenv from 18.0.6 to 18.0.8 in the production-dependencies group ([#254](https://github.com/chrischall/creditkarma-mcp/issues/254)) ([e2c68a2](https://github.com/chrischall/creditkarma-mcp/commit/e2c68a2caf2697a22f1d84911203ba673d1bfc1b))
+* **http:** say why Credit Karma could not be reached, with a hint keyed to the cause ([#258](https://github.com/chrischall/creditkarma-mcp/issues/258)) ([ddc8dd1](https://github.com/chrischall/creditkarma-mcp/commit/ddc8dd19e96d4ba791d3c53dff4f4d3ca7cf6533))
+
+
+### Documentation
+
+* **mint:** add sample prompts for the public catalog ([#257](https://github.com/chrischall/creditkarma-mcp/issues/257)) ([af3c497](https://github.com/chrischall/creditkarma-mcp/commit/af3c497c5f44b59149b4a60c42b7fbc42d5a590f))
+
 ## [3.3.4](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.3...v3.3.4) (2026-10-16)
 
 

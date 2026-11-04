@@ -1,8 +1,9 @@
 import { z } from 'zod'
-import { minifiedResult } from '@chrischall/mcp-utils'
+import { minifiedResult, rawTextResult } from '@chrischall/mcp-utils'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import type { Database } from '../db.js'
+import { moneyMeta } from './hints.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -265,12 +266,38 @@ const LIMIT_RANGE = `a whole number from 1 to ${MAX_QUERY_LIMIT}`
 const limitArg = (dflt: number) =>
   z.number().int().min(1).max(MAX_QUERY_LIMIT).optional().describe(`Default ${dflt}; ${LIMIT_RANGE}`)
 
+const BRIEF_MAX = 120
+
+const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
+
+/**
+ * One transaction as one line, `title — <ISO date | no date> — <status>`, at
+ * most 120 characters (the title is shortened). The title is the merchant
+ * (else the bank's description) and the signed amount: negative = money out,
+ * positive = money in, as everywhere in this server.
+ */
+export function briefLine(tx: QueryTransactionRow): string {
+  const name = (tx.merchant || tx.description).trim() || '(no description)'
+  const amount = `${tx.amount < 0 ? '-' : '+'}${money.format(Math.abs(tx.amount))}`
+  const tail = ` ${amount} — ${tx.date || 'no date'} — ${tx.status || 'no status'}`
+  const room = BRIEF_MAX - tail.length
+  const shown = name.length > room ? `${name.slice(0, room - 1)}…` : name
+  return `${shown}${tail}`
+}
+
 export function registerQueryTools(server: McpServer, ctx: AppContext): void {
   server.registerTool(
     'ck_list_transactions',
     {
-      description: 'List transactions with optional filters. Paginated.',
+      description:
+        'List transactions with optional filters, newest first. Paginated. Reads the local database ' +
+        '(filled by ck_sync_transactions). view "brief" answers one line per transaction instead of JSON.',
       annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: moneyMeta('whats-new', {
+        canonical: true,
+        when: { start: 'start_date', end: 'end_date' },
+        aliases: ['charges', 'purchases', 'new charges', 'spent', 'bank', 'credit card', 'money'],
+      }),
       inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),
@@ -282,10 +309,15 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
         max_amount: z.number().optional().describe('Maximum absolute amount'),
         limit: limitArg(50),
         offset: z.number().int().min(0).optional().describe('Default 0; a whole number, 0 or more'),
+        view: z.enum(['full', 'brief']).optional().describe(
+          '"full" (default) returns the JSON page; "brief" returns one line per transaction: ' +
+          'merchant and signed amount — date (YYYY-MM-DD, or "no date") — status.',
+        ),
       }),
     },
-    async (args) => {
+    async ({ view, ...args }) => {
       const result = await handleListTransactions(args, ctx)
+      if (view === 'brief') return rawTextResult(result.transactions.map(briefLine).join('\n'))
       return minifiedResult(result)
     }
   )
@@ -295,6 +327,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     {
       description: 'Return the N most recent transactions. Convenience shortcut for ck_list_transactions.',
       annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: moneyMeta('whats-new', { aliases: ['latest charges', 'recent purchases', 'last purchase'] }),
       inputSchema: z.object({
         limit: limitArg(25).describe(`Number of transactions to return (default 25; ${LIMIT_RANGE})`),
       }),
@@ -310,6 +343,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     {
       description: 'Group debit transactions by category and return totals.',
       annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: moneyMeta('lookup', { aliases: ['budget', 'where did my money go', 'how much did i spend'] }),
       inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),
@@ -327,6 +361,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     {
       description: 'Return top merchants by total debit spend.',
       annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: moneyMeta('lookup', { aliases: ['where do i shop', 'top stores', 'how much did i spend'] }),
       inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),
@@ -345,6 +380,7 @@ export function registerQueryTools(server: McpServer, ctx: AppContext): void {
     {
       description: 'Return per-account debit, credit, and net totals.',
       annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: moneyMeta('lookup', { aliases: ['money in and out', 'cash flow'] }),
       inputSchema: z.object({
         start_date: z.string().optional().describe('YYYY-MM-DD'),
         end_date: z.string().optional().describe('YYYY-MM-DD'),

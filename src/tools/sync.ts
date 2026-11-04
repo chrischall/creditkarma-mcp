@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { minifiedResult, shiftIsoDate, toIsoDateUtc } from '@chrischall/mcp-utils'
+import { moneyMeta } from './hints.js'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import {
@@ -416,6 +417,7 @@ export function registerSyncTools(server: McpServer, ctx: AppContext): void {
         'Bounded and resumable: when it pauses with more to fetch it returns ' +
         'another_run_needed:true and a note — run it again and it continues from where it stopped.',
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      _meta: moneyMeta('other', { aliases: ['update my transactions', 'refresh credit karma'] }),
       inputSchema: z.object({
         force_full: z.boolean().optional().describe(
           'If true, walk the whole history with no date cutoff. Starts from the beginning, ' +

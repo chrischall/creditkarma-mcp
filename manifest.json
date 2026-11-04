@@ -128,7 +128,7 @@
     },
     {
       "name": "ck_list_transactions",
-      "description": "List transactions with optional filters. Paginated."
+      "description": "List transactions with optional filters, newest first. Paginated; view \"brief\" answers one line per transaction."
     },
     {
       "name": "ck_get_recent_transactions",

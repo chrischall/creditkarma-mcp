@@ -108,7 +108,7 @@ The MCP handles auth automatically once any of the three paths is configured.
 
 On a host with context groups (mcp-host), every tool here except `ck_healthcheck` is in the **money** group.
 
-- **Canonical read:** `ck_list_transactions` answers the group's *what's new* ask ("any new charges this week?"), over its `start_date`/`end_date` range, in its `brief` view. It takes no subject: one call covers every account, so the group never fans out per account.
+- **Canonical read:** `ck_list_transactions` answers the group's *what's new* ask ("any new charges this week?"), over its `start_date`/`end_date` range, in its `brief` view — the lines ride in the untrusted-data envelope (merchant names are the bank's and the merchants' text), with a `-- none` note for an empty range and `-- N of M shown` for a partial page. It takes no subject: one call covers every account, so the group never fans out per account.
 - Nothing here answers *what's due* or *what's on* — Credit Karma's data carries no bill due dates — so those asks name no Credit Karma source.
 - A compound ask spans groups: "what came in at school today, and any new charges?" asks school's sources and this one in one answer.
 - The canonical read is the local database, so it is as fresh as the last `ck_sync_transactions`. This is a browser-bridged MCP (sign-in is read through ContextMint Bridge): when the bridge is not connected, the group answers that Credit Karma needs your browser open rather than calling it.

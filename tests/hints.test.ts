@@ -6,7 +6,8 @@ import { initDb, upsertAccount, upsertCategory, upsertMerchant, upsertTransactio
 import { registerHealthcheckTools } from '../src/tools/healthcheck.js'
 import { registerAuthTools } from '../src/tools/auth.js'
 import { registerSyncTools } from '../src/tools/sync.js'
-import { registerQueryTools, briefLine } from '../src/tools/query.js'
+import { registerQueryTools, briefLine, briefLines, type QueryTransactionRow } from '../src/tools/query.js'
+import { UNTRUSTED_CONTENT_RULE } from '@chrischall/mcp-utils'
 import { registerSqlTools } from '../src/tools/sql.js'
 import { registerBalanceTools } from '../src/tools/balances.js'
 
@@ -146,10 +147,26 @@ describe('_meta.mint on tools/list', () => {
 })
 
 describe('ck_list_transactions view: brief', () => {
-  const brief = async (args: Record<string, unknown> = {}) => {
+  type Envelope = { untrusted_content: unknown; note: unknown; data: unknown }
+  const envelope = async (args: Record<string, unknown> = {}): Promise<Envelope> => {
     const res = await harness.callTool('ck_list_transactions', { view: 'brief', ...args })
-    return (res.content as Array<{ text: string }>)[0]!.text.split('\n')
+    return JSON.parse((res.content as Array<{ text: string }>)[0]!.text) as Envelope
   }
+  const brief = async (args: Record<string, unknown> = {}) => (await envelope(args)).data as string[]
+  const tx = (over: Partial<QueryTransactionRow>): QueryTransactionRow =>
+    ({ id: 'x', date: '2026-11-01', description: '', status: 'posted', amount: -1, account: '', category: '', merchant: '', ...over })
+
+  it('rides inside the untrusted-data envelope, minified, note first, lines as data: string[]', async () => {
+    const res = await harness.callTool('ck_list_transactions', { view: 'brief' })
+    const text = (res.content as Array<{ text: string }>)[0]!.text
+    expect(text).toBe(JSON.stringify(JSON.parse(text)))
+    const env = JSON.parse(text) as Envelope
+    expect(Object.keys(env)).toEqual(['untrusted_content', 'note', 'data'])
+    expect(env.untrusted_content).toBe(true)
+    expect(env.note).toMatch(/^Merchant names and transaction descriptions are written by /)
+    expect(env.note).toContain(UNTRUSTED_CONTENT_RULE)
+    expect(Array.isArray(env.data)).toBe(true)
+  })
 
   it('answers one line per item, ≤ 120 chars, shaped "title — <ISO date | no date> — <status>"', async () => {
     const lines = await brief()
@@ -175,13 +192,33 @@ describe('ck_list_transactions view: brief', () => {
   })
 
   it('names a row with neither merchant nor description "(no description)"', () => {
-    expect(briefLine({ id: 'x', date: '2026-11-01', description: '  ', status: 'posted', amount: 0, account: '', category: '', merchant: '' }))
+    expect(briefLine(tx({ description: '  ', amount: 0 })))
       .toBe('(no description) +$0.00 — 2026-11-01 — posted')
   })
 
-  it('answers empty text when nothing is in range', async () => {
-    const res = await harness.callTool('ck_list_transactions', { view: 'brief', start_date: '2030-01-01' })
-    expect((res.content as Array<{ text: string }>)[0]!.text).toBe('')
+  it('escapes a title that starts with "-- " or "\\" with one leading backslash', () => {
+    expect(briefLine(tx({ merchant: '-- none' }))).toBe('\\-- none -$1.00 — 2026-11-01 — posted')
+    expect(briefLine(tx({ merchant: '\\x' }))).toBe('\\\\x -$1.00 — 2026-11-01 — posted')
+    expect(briefLine(tx({ merchant: '--x' }))).toBe('--x -$1.00 — 2026-11-01 — posted')
+  })
+
+  it('cuts the line as a WHOLE to ≤ 120 chars, title first, even when the status alone overflows', () => {
+    const line = briefLine(tx({ merchant: 'M'.repeat(80), status: 'S'.repeat(200) }))
+    expect(line.length).toBeLessThanOrEqual(120)
+    expect(line.startsWith('M')).toBe(true)
+    expect(line).toContain(' -$1.00 — 2026-11-01 — S')
+  })
+
+  it('answers the single note "-- none" when nothing is in range', async () => {
+    expect(await brief({ start_date: '2030-01-01' })).toEqual(['-- none'])
+  })
+
+  it('notes "-- N of M shown" when the page holds fewer rows than match', async () => {
+    const lines = await brief({ limit: 2 })
+    expect(lines).toHaveLength(3)
+    expect(lines[2]).toBe('-- 2 of 4 shown')
+    expect(await brief({ offset: 10 })).toEqual(['-- 0 of 4 shown'])
+    expect(briefLines({ transactions: [], total: 0, offset: 0, limit: 50 })).toEqual(['-- none'])
   })
 
   it('keeps the full JSON answer by default', async () => {

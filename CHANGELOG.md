@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.4.0](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.5...v3.4.0) (2026-11-04)
+
+
+### Features
+
+* context-group hints, a brief view on ck_list_transactions ([#267](https://github.com/chrischall/creditkarma-mcp/issues/267)) ([1f90ad4](https://github.com/chrischall/creditkarma-mcp/commit/1f90ad417b24d06d4cbc1f31d84271b908775414))
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group across 1 directory with 3 updates ([#266](https://github.com/chrischall/creditkarma-mcp/issues/266)) ([08ced01](https://github.com/chrischall/creditkarma-mcp/commit/08ced016d0dbd12d4cb2362038afa89096a8a9c5))
+* **deps:** bump the production-dependencies group with 3 updates ([#263](https://github.com/chrischall/creditkarma-mcp/issues/263)) ([0d48cf3](https://github.com/chrischall/creditkarma-mcp/commit/0d48cf374bf433a7f6c508f743db111288fb86ce))
+
 ## [3.3.5](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.4...v3.3.5) (2026-10-20)
 
 

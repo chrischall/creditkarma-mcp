@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { Worker } from 'node:worker_threads'
 import { minifiedResult, withAmbientCancellation } from '@chrischall/mcp-utils'
+import { moneyMeta } from './hints.js'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 
@@ -168,6 +169,7 @@ export function registerSqlTools(server: McpServer, ctx: AppContext): void {
         `A query running longer than ${SQL_TIME_BUDGET_MS / 1000} s is stopped. Only the first statement runs. ` +
         'Tables: transactions, accounts, categories, merchants, sync_state.',
       annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: moneyMeta('lookup'),
       inputSchema: z.object({
         sql: z.string().describe('A SELECT SQL statement'),
         max_rows: z.number().int().min(1).max(MAX_ROWS_LIMIT).optional()

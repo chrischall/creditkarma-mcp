@@ -46,6 +46,7 @@ src/
                         #   ck_get_account_summary
     balances.ts         # ck_get_account_balances + refreshBalances() (run once by every sync)
     sql.ts              # ck_query_sql
+    hints.ts            # moneyMeta() — `_meta.mint` context-group hints (group `money`; ck_list_transactions is the canonical what's-new read, with view: brief)
 ```
 
 Each tool file exports tool definitions (MCP schemas) and a handler. `index.ts` aggregates all tools and routes by name.

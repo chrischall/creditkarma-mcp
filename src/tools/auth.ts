@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { rawTextResult, minifiedResult, readEnvVar } from '@chrischall/mcp-utils'
 import { splitCkatCookie } from '../auth.js'
+import { moneyMeta } from './hints.js'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import { isJwtExpired } from '../client.js'
@@ -86,6 +87,7 @@ export function registerAuthTools(server: McpServer, ctx: AppContext): void {
     {
       description: 'Store a Credit Karma session to enable automatic token refresh. Pass the full Cookie header from a signed-in creditkarma.com request (Chrome DevTools \u2192 Network \u2192 any creditkarma.com request \u2192 Request Headers \u2192 right-click the `cookie` header \u2192 Copy value). For most users the easier onboarding path is to install the ContextMint Bridge extension and sign into creditkarma.com \u2014 the MCP reads the cookies automatically.',
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      _meta: moneyMeta('other'),
       inputSchema: z.object({
         cookies: z.string().describe('Full Cookie header from a signed-in creditkarma.com request (contains CKAT, CKTRKID, etc.)'),
       }),
@@ -105,6 +107,7 @@ export function registerAuthTools(server: McpServer, ctx: AppContext): void {
         'Use when the user stops using this server or wants their stored login removed. Local only — Credit Karma is ' +
         'not contacted, synced transactions are kept, and a CK_COOKIES value set in the host config is not changed.',
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      _meta: moneyMeta('other'),
       inputSchema: z.object({}),
     },
     async () => minifiedResult(handleForgetSession(ctx))

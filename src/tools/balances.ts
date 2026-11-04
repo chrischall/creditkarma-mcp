@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { minifiedResult } from '@chrischall/mcp-utils'
+import { moneyMeta } from './hints.js'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { AppContext } from '../index.js'
 import { OPERATIONS } from '../client.js'
@@ -200,6 +201,7 @@ export function registerBalanceTools(server: McpServer, ctx: AppContext): void {
         'Liabilities are negative, matching transactions; available credit is limit minus balance. ' +
         '`stale` is true past 7 days (linked) or 35 days (credit report).',
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      _meta: moneyMeta('lookup', { aliases: ['how much do i have', 'what do i owe', 'net worth', 'bank account', 'credit card', 'available credit'] }),
       inputSchema: z.object({
         refresh: z.boolean().optional().describe(
           'Fetch balances live before reading. Default false (local data only).',

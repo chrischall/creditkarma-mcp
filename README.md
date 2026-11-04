@@ -157,7 +157,7 @@ The server extracts the access and refresh JWTs from the `CKAT` cookie inside th
 | `ck_forget_session` | Delete the saved-session file and clear in-memory credentials (local only; synced transactions are kept) |
 | `ck_sync_transactions` | Sync transactions into the local SQLite database, then refresh account balances |
 | `ck_get_account_balances` | Balance of every account: institution, type, last 4, current balance, available credit and credit limit (cards), as-of time and a `stale` flag. `refresh: true` fetches live first; `include_matched: true` also lists credit-report rows that duplicate a linked account |
-| `ck_list_transactions` | List transactions with filters (date, account, category, merchant, amount) |
+| `ck_list_transactions` | List transactions with filters (date, account, category, merchant, amount); `view: "brief"` for one line per transaction |
 | `ck_get_recent_transactions` | Fetch the N most recent transactions |
 | `ck_get_spending_by_category` | Spending totals grouped by category |
 | `ck_get_spending_by_merchant` | Spending totals grouped by merchant |

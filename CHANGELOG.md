@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.4.1](https://github.com/chrischall/creditkarma-mcp/compare/v3.4.0...v3.4.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **deps:** bump @chrischall/mcp-utils from 3.4.0 to 3.4.1 in the production-dependencies group ([#271](https://github.com/chrischall/creditkarma-mcp/issues/271)) ([634144d](https://github.com/chrischall/creditkarma-mcp/commit/634144d7739f9495daeb5bad26bf69a8bf10057e))
+* **deps:** bump @chrischall/mcp-utils from 3.8.1 to 3.9.0 in the production-dependencies group ([#275](https://github.com/chrischall/creditkarma-mcp/issues/275)) ([74a4d24](https://github.com/chrischall/creditkarma-mcp/commit/74a4d24cb16d48320aa565967b6592040b99d191))
+* **deps:** bump the production-dependencies group with 4 updates ([#273](https://github.com/chrischall/creditkarma-mcp/issues/273)) ([8d1ee4d](https://github.com/chrischall/creditkarma-mcp/commit/8d1ee4d51863a84bbb209a4a778388f7796685a5))
+
 ## [3.4.0](https://github.com/chrischall/creditkarma-mcp/compare/v3.3.5...v3.4.0) (2026-11-04)
 
 
